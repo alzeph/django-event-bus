@@ -5,11 +5,11 @@ gRPC transport: generic ``GetResource(resource, pk)`` RPC.
 
 from __future__ import annotations
 
+import json
 import threading
 from typing import Any
 
 import grpc
-from google.protobuf import json_format
 
 from ...exceptions import RemoteServiceUnavailableError
 from ..proto import remote_resource_pb2, remote_resource_pb2_grpc
@@ -79,7 +79,10 @@ class GRPCTransport(BaseTransport):
 
         if not response.found:
             return None
-        return json_format.MessageToDict(response.data)
+        # JSON, pas google.protobuf.Struct: Struct force tout nombre en
+        # double et convertirait silencieusement un entier en flottant
+        # (perte de précision au-delà de 2^53) — voir remote_resource.proto.
+        return json.loads(response.data_json)
 
     def close(self) -> None:
         """Ferme tous les canaux ouverts.

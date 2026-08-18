@@ -1,6 +1,8 @@
-from accounts.views import get_user
-from django.urls import path
+from django.urls import include, path
 
 urlpatterns = [
-    path("api/users/<int:pk>/", get_user, name="api-user-detail"),
+    # Un seul include, quel que soit le nombre de ressources exposées
+    # via @expose_resource (voir accounts/resources.py) — sert
+    # "GET /api/<resource>/<pk>/" pour toutes.
+    path("api/", include("django_event_bus.remote.urls")),
 ]

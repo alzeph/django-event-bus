@@ -35,8 +35,8 @@ EVENT_BUS = {
 }
 
 # Ce service est ici la SOURCE de données: il n'a pas besoin de
-# SERVICE_REGISTRY (il ne consomme aucun RemoteForeignKey lui-même),
-# juste d'un résolveur gRPC pour manage.py remote_grpc_server.
-REMOTE_DATA = {
-    "GRPC_RESOLVER": "accounts.grpc_resolver.resolve",
-}
+# SERVICE_REGISTRY (il ne consomme aucun RemoteForeignKey lui-même). Il
+# n'a même pas besoin de GRPC_RESOLVER: dès qu'une ressource est
+# déclarée via @expose_resource (voir accounts/resources.py), le
+# résolveur générique de la librairie répond automatiquement en gRPC
+# comme en HTTP — REMOTE_DATA n'a donc rien à configurer ici.

@@ -2,20 +2,25 @@
 // Un seul RPC, GetResource, pour ne pas exiger un .proto par service:
 // n'importe quel service peut l'implementer en sous-classant
 // RemoteResourceServicer (voir remote/grpc_server.py) sans ecrire de
-// definition protobuf propre. La donnee est transportee sous forme de
-// google.protobuf.Struct (equivalent d'un objet JSON dynamique).
+// definition protobuf propre. La donnee est transportee en JSON (une
+// chaine), pas en google.protobuf.Struct: Struct ne connait qu'un type
+// numerique (double) et convertirait silencieusement tout entier en
+// flottant (perte de precision au-dela de 2^53) ; le JSON, lui,
+// distingue int et float comme le fait deja HTTPTransport.
 //
 // Generic gRPC contract for inter-service data retrieval.
 // A single RPC, GetResource, so no service needs its own .proto: any
 // service can implement it by subclassing RemoteResourceServicer (see
 // remote/grpc_server.py) without writing its own protobuf definition.
-// Data is carried as a google.protobuf.Struct (dynamic JSON-like object).
+// Data is carried as JSON (a string), not as google.protobuf.Struct:
+// Struct only has one numeric type (double) and would silently turn
+// every integer into a float (precision loss beyond 2^53); JSON, on the
+// other hand, distinguishes int from float, just like HTTPTransport
+// already does.
 
 syntax = "proto3";
 
 package django_event_bus.remote;
-
-import "google/protobuf/struct.proto";
 
 message ResourceRequest {
     string resource = 1;
@@ -24,7 +29,7 @@ message ResourceRequest {
 
 message ResourceResponse {
     bool found = 1;
-    google.protobuf.Struct data = 2;
+    string data_json = 2;
 }
 
 service RemoteResourceService {

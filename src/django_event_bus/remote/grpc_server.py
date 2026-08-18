@@ -5,6 +5,7 @@ Reusable gRPC server exposing the generic ``GetResource`` RPC.
 
 from __future__ import annotations
 
+import json
 import logging
 import signal
 import threading
@@ -13,7 +14,7 @@ from concurrent import futures
 from typing import Any
 
 import grpc
-from google.protobuf.struct_pb2 import Struct
+from django.core.serializers.json import DjangoJSONEncoder
 
 from .proto import remote_resource_pb2, remote_resource_pb2_grpc
 
@@ -63,9 +64,10 @@ class RemoteResourceServicer(remote_resource_pb2_grpc.RemoteResourceServiceServi
         data = self._resolve(request.resource, request.pk)
         if data is None:
             return remote_resource_pb2.ResourceResponse(found=False)
-        struct = Struct()
-        struct.update(data)
-        return remote_resource_pb2.ResourceResponse(found=True, data=struct)
+        # JSON (via DjangoJSONEncoder, comme le bus d'événements), pas
+        # google.protobuf.Struct: voir remote_resource.proto pour le pourquoi.
+        data_json = json.dumps(data, cls=DjangoJSONEncoder)
+        return remote_resource_pb2.ResourceResponse(found=True, data_json=data_json)
 
 
 def serve(

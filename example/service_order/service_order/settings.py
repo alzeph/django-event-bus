@@ -44,6 +44,9 @@ REMOTE_DATA = {
             "grpc": {"target": "localhost:50051", "timeout": 3},
         },
     },
+    # "http" par défaut ; passez à "grpc" pour basculer sur l'autre
+    # transport sans changer une ligne côté service_auth ni dans
+    # orders/models.py (voir le README pour l'essayer).
     "DEFAULT_TRANSPORT": "http",
     "DEFAULT_TTL": 30,
 }

@@ -22,20 +22,19 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15remote_resource.proto\x12\x17\x64jango_event_bus.remote\x1a\x1cgoogle/protobuf/struct.proto\"/\n\x0fResourceRequest\x12\x10\n\x08resource\x18\x01 \x01(\t\x12\n\n\x02pk\x18\x02 \x01(\t\"H\n\x10ResourceResponse\x12\r\n\x05\x66ound\x18\x01 \x01(\x08\x12%\n\x04\x64\x61ta\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct2{\n\x15RemoteResourceService\x12\x62\n\x0bGetResource\x12(.django_event_bus.remote.ResourceRequest\x1a).django_event_bus.remote.ResourceResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15remote_resource.proto\x12\x17\x64jango_event_bus.remote\"/\n\x0fResourceRequest\x12\x10\n\x08resource\x18\x01 \x01(\t\x12\n\n\x02pk\x18\x02 \x01(\t\"4\n\x10ResourceResponse\x12\r\n\x05\x66ound\x18\x01 \x01(\x08\x12\x11\n\tdata_json\x18\x02 \x01(\t2{\n\x15RemoteResourceService\x12\x62\n\x0bGetResource\x12(.django_event_bus.remote.ResourceRequest\x1a).django_event_bus.remote.ResourceResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'remote_resource_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_RESOURCEREQUEST']._serialized_start=80
-  _globals['_RESOURCEREQUEST']._serialized_end=127
-  _globals['_RESOURCERESPONSE']._serialized_start=129
-  _globals['_RESOURCERESPONSE']._serialized_end=201
-  _globals['_REMOTERESOURCESERVICE']._serialized_start=203
-  _globals['_REMOTERESOURCESERVICE']._serialized_end=326
+  _globals['_RESOURCEREQUEST']._serialized_start=50
+  _globals['_RESOURCEREQUEST']._serialized_end=97
+  _globals['_RESOURCERESPONSE']._serialized_start=99
+  _globals['_RESOURCERESPONSE']._serialized_end=151
+  _globals['_REMOTERESOURCESERVICE']._serialized_start=153
+  _globals['_REMOTERESOURCESERVICE']._serialized_end=276
 # @@protoc_insertion_point(module_scope)

@@ -23,3 +23,10 @@ class Ticket(models.Model):
     owner_id = RemoteForeignKey(
         service="service_auth", resource="users", accessor_name="owner_account"
     )
+
+
+class Widget(models.Model):
+    """Modèle dédié aux tests de ``ResourceSerializer``/``expose_resource``."""
+
+    name = models.CharField(max_length=64)
+    price_cents = models.IntegerField()

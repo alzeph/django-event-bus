@@ -119,8 +119,10 @@ REMOTE_DATA_DEFAULTS: dict[str, Any] = {
     # Chemin pointé vers (resource: str, pk: str) -> dict | None, utilisé
     # uniquement par `manage.py remote_grpc_server` (services exposant
     # leurs données en gRPC — pas requis pour les services qui ne font
-    # que consommer via RemoteForeignKey).
-    "GRPC_RESOLVER": None,
+    # que consommer via RemoteForeignKey). Par défaut: le résolveur
+    # générique basé sur @expose_resource, qui couvre le cas standard
+    # sans qu'aucun service n'ait à écrire sa propre fonction.
+    "GRPC_RESOLVER": "django_event_bus.remote.resources.registry_resolver",
 }
 
 remote_settings = LazySettings("REMOTE_DATA", REMOTE_DATA_DEFAULTS)

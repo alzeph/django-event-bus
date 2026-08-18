@@ -6,12 +6,30 @@ from django_event_bus.remote import RemoteForeignKey
 class Order(models.Model):
     """Commande locale référençant un utilisateur détenu par service_auth.
 
-    `user_id` est une colonne entière ordinaire (migrations normales).
-    `order.user` résout l'utilisateur via cache Django puis, si absent,
-    HTTP/gRPC vers service_auth — sans que ce module ne connaisse son URL.
-    `invalidate_on`: quand service_auth publie "auth.user_updated", le
-    cache de cet utilisateur est vidé automatiquement (voir
-    django_event_bus.remote.invalidation).
+    `user_id` est une colonne entière ordinaire (migrations normales,
+    `makemigrations`/`migrate` fonctionnent comme pour n'importe quel
+    IntegerField). `order.user` (nom dérivé de `user_id`, comme une
+    ForeignKey classique) résout l'utilisateur:
+
+    1. d'abord dans le cache Django (`REMOTE_DATA["DEFAULT_TTL"]`
+       secondes, `locmem` en dev/tests, Redis en prod via
+       `django-redis` si configuré) ;
+    2. sinon via le transport configuré (`REMOTE_DATA["DEFAULT_TRANSPORT"]`,
+       ici "http" — changez-le en "grpc" pour utiliser l'autre chemin,
+       exposé par la même déclaration @expose_resource côté
+       service_auth, voir example/service_auth/accounts/resources.py) ;
+
+    ce module ne connaît ni l'URL ni le port de service_auth: cette
+    information vit uniquement dans REMOTE_DATA["SERVICE_REGISTRY"]
+    (service_order/settings.py).
+
+    `invalidate_on=["auth.user_updated"]`: quand service_auth publie cet
+    événement (voir service_auth/accounts/events.py), le cache de
+    l'utilisateur concerné est vidé automatiquement — le prochain accès
+    à `order.user` re-déclenche un fetch HTTP/gRPC au lieu de renvoyer
+    une valeur périmée. C'est la combinaison des deux volets de la
+    librairie (bus d'événements + RemoteForeignKey) qui rend ça possible
+    sans code supplémentaire ici.
     """
 
     reference = models.CharField(max_length=64)

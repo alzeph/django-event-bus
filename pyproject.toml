@@ -39,6 +39,7 @@ ignore = [
     "D203", # incompatible avec D211 (ligne vide avant docstring de classe)
     "D213", # incompatible avec D212 (résumé sur la première ligne)
     "D401", # heuristique anglaise (mode impératif) inadaptée à des résumés en français
+    "RUF012", # classes Meta (ResourceSerializer) jamais instanciées: pas de risque de mutation partagée
 ]
 
 [tool.ruff.lint.pydocstyle]
