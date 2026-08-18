@@ -1,5 +1,6 @@
 import pytest
 import requests
+from django.test import override_settings
 
 from django_event_bus.exceptions import RemoteServiceUnavailableError
 from django_event_bus.remote.transports.http import HTTPTransport
@@ -37,3 +38,24 @@ def test_fetch_raises_on_connection_error(requests_mock):
 
     with pytest.raises(RemoteServiceUnavailableError):
         transport.fetch(service="service_auth", resource="users", pk=1)
+
+
+def test_fetch_sends_configured_headers(requests_mock):
+    """Les en-têtes déclarés dans SERVICE_REGISTRY (ex: un token de
+    service-à-service) sont bien transmis à chaque requête."""
+    requests_mock.get("http://testserver/api/users/1/", json={"id": 1})
+    registry = {
+        "service_auth": {
+            "http": {
+                "base_url": "http://testserver/api",
+                "timeout": 3,
+                "headers": {"Authorization": "Bearer test-token"},
+            }
+        }
+    }
+
+    with override_settings(REMOTE_DATA={"SERVICE_REGISTRY": registry}):
+        transport = HTTPTransport()
+        transport.fetch(service="service_auth", resource="users", pk=1)
+
+    assert requests_mock.last_request.headers["Authorization"] == "Bearer test-token"

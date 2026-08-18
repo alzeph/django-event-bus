@@ -53,3 +53,41 @@ def test_dispatch_with_no_receiver_acks_without_error():
     )
 
     assert dispatch(broker, envelope) is True
+
+
+def test_dispatch_runs_every_receiver_even_if_one_fails():
+    """Un receiver qui échoue n'empêche pas les autres de s'exécuter:
+    dispatch() ne s'arrête pas au premier échec. Documente aussi la
+    conséquence pratique de l'at-least-once (voir README): en cas de
+    fail(), une redélivrance rejouera TOUS les receivers, y compris ceux
+    qui ont déjà réussi — ils doivent donc être idempotents."""
+    calls = []
+
+    def first(**kwargs):
+        calls.append("first")
+
+    def second(**kwargs):
+        calls.append("second")
+        raise RuntimeError("boom")
+
+    def third(**kwargs):
+        calls.append("third")
+
+    event_type = "multi.receiver.event"
+    register(event_type, first)
+    register(event_type, second)
+    register(event_type, third)
+
+    broker = LocMemBroker(service_name="test_service", options={})
+    envelope = EventEnvelope(
+        event_type=event_type, source_service="test_service", payload={}
+    )
+
+    assert dispatch(broker, envelope) is False
+    assert calls == ["first", "second", "third"]
+
+    # Une redélivrance (fail() puis nouvelle tentative) rejoue bien tout,
+    # y compris "first" et "third" qui avaient déjà réussi.
+    calls.clear()
+    assert dispatch(broker, envelope) is False
+    assert calls == ["first", "second", "third"]

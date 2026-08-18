@@ -62,3 +62,36 @@ def test_fetch_raises_when_server_unreachable():
             transport.fetch(service="service_auth", resource="users", pk=1)
     finally:
         transport.close()
+
+
+def test_channel_is_reused_across_multiple_fetches(grpc_users):
+    """Le canal gRPC est ouvert une fois par service puis réutilisé, pas
+    recréé à chaque fetch() — coûteux sinon (poignée de main TLS/TCP)."""
+    transport = GRPCTransport()
+    try:
+        transport.fetch(service="service_auth", resource="users", pk=1)
+        transport.fetch(service="service_auth", resource="users", pk=1)
+        transport.fetch(service="service_auth", resource="users", pk=999)
+
+        assert len(transport._channels) == 1
+        assert "service_auth" in transport._channels
+    finally:
+        transport.close()
+
+    assert transport._channels == {}
+
+
+def test_fetch_reflects_data_updated_between_calls(grpc_users):
+    """Le transport ne met rien en cache lui-même: deux fetch()
+    successifs reflètent l'état courant côté serveur, sans délai."""
+    transport = GRPCTransport()
+    try:
+        first = transport.fetch(service="service_auth", resource="users", pk=1)
+        assert first == {"id": 1, "email": "a@example.com"}
+
+        grpc_users[("users", "1")] = {"id": 1, "email": "updated@example.com"}
+
+        second = transport.fetch(service="service_auth", resource="users", pk=1)
+        assert second == {"id": 1, "email": "updated@example.com"}
+    finally:
+        transport.close()
