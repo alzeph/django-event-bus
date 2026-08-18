@@ -374,10 +374,15 @@ lit l'autre :
 | `service_auth` | `User` (`accounts/resources.py`, HTTP+gRPC) | `OrderBookmark.order_id` → `service_order` (`accounts/models.py`) | `auth.user_created`/`auth.user_updated` |
 | `service_order` | `Order` (`orders/resources.py`, HTTP) | `Order.user_id` → `service_auth` (`orders/models.py`) | `orders.order_created`/`orders.order_updated` |
 
-Chaque service a aussi une vue "dashboard" consultable au navigateur/curl
-qui affiche ses données locales **et** la donnée résolue à distance
-côte à côte (`accounts/views.py`, `orders/views.py`) — la preuve visuelle
-que la résolution fonctionne, pas seulement en shell.
+Chaque service a aussi de vraies pages web, sans shell ni curl
+nécessaire : `http://localhost:8001/accounts/` et
+`http://localhost:8002/orders/` listent les comptes/commandes existants
+et ont un formulaire pour en créer — chaque création redirige vers un
+"dashboard" (`.../<pk>/dashboard/`) qui affiche les données locales **et**
+la donnée résolue à distance côte à côte, avec un formulaire pour
+modifier la valeur locale (déclenche l'événement, donc l'invalidation
+côté de l'autre service) et, côté `service_auth`, un formulaire pour
+épingler une commande par son id (`accounts/views.py`, `orders/views.py`).
 
 ### Option A (recommandée) : tout en une commande avec Docker
 
@@ -393,7 +398,12 @@ des migrations concurrentes sur le même fichier SQLite), et les process
 `docker compose -f example/docker-compose.yml ps` doit montrer six
 conteneurs `Up` (les deux `_migrate` se terminent, c'est normal).
 
-Créez les données via `docker compose exec` (un `manage.py shell` normal, dans le conteneur) :
+Le plus simple : ouvrez `http://localhost:8001/accounts/` et
+`http://localhost:8002/orders/` dans un navigateur, créez un compte puis
+une commande (référençant son id), et épinglez-la depuis le dashboard du
+compte — tout se fait par formulaire, aucune commande à taper.
+
+Alternative en ligne de commande, via `docker compose exec` (un `manage.py shell` normal, dans le conteneur) :
 
 ```sh
 echo "
