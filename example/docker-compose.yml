@@ -1,5 +1,122 @@
+# Démo entière en une commande: `docker compose -f example/docker-compose.yml up -d --build`
+#
+# Une seule image (voir ../Dockerfile) pour tous les process: seule la
+# commande change par service. Les deux apps se joignent par nom de
+# service (ex: http://service_auth_http:8000) plutôt que par
+# "localhost" — c'est la seule différence avec le lancement manuel
+# décrit dans le README, absorbée par les variables d'environnement
+# lues dans les settings.py (SERVICE_*_HTTP_BASE_URL, REDIS_URL, ...).
+#
+# *_migrate: conteneurs jetables (appliquent les migrations puis
+# s'arrêtent) - les autres conteneurs de la même app attendent qu'ils
+# aient réussi (`condition: service_completed_successfully`) pour
+# éviter plusieurs `migrate` concurrents sur le même fichier SQLite.
+
+x-service-auth-env: &service_auth_env
+  REDIS_URL: redis://redis:6379/0
+  CACHE_REDIS_URL: redis://redis:6379/1
+  SQLITE_PATH: /data/db.sqlite3
+  SERVICE_ORDER_HTTP_BASE_URL: http://service_order_http:8000/api
+
+x-service-order-env: &service_order_env
+  REDIS_URL: redis://redis:6379/0
+  CACHE_REDIS_URL: redis://redis:6379/1
+  SQLITE_PATH: /data/db.sqlite3
+  SERVICE_AUTH_HTTP_BASE_URL: http://service_auth_http:8000/api
+  SERVICE_AUTH_GRPC_TARGET: service_auth_grpc:50051
+
 services:
   redis:
     image: redis:7-alpine
+    # 6380 côté hôte (pas 6379): évite un conflit si un Redis tourne
+    # déjà nativement sur la machine hôte. Les conteneurs de la démo,
+    # eux, se joignent à "redis:6379" via le réseau interne Compose,
+    # jamais par ce port hôte.
     ports:
-      - "6379:6379"
+      - "6380:6379"
+
+  service_auth_migrate:
+    build: ..
+    command: uv run python example/service_auth/manage.py migrate
+    environment: *service_auth_env
+    volumes:
+      - service_auth_db:/data
+    depends_on:
+      - redis
+
+  service_auth_http:
+    build: ..
+    command: uv run python example/service_auth/manage.py runserver 0.0.0.0:8000
+    environment: *service_auth_env
+    volumes:
+      - service_auth_db:/data
+    ports:
+      - "8001:8000"
+    depends_on:
+      redis:
+        condition: service_started
+      service_auth_migrate:
+        condition: service_completed_successfully
+
+  service_auth_grpc:
+    build: ..
+    command: uv run python example/service_auth/manage.py remote_grpc_server --port 50051
+    environment: *service_auth_env
+    volumes:
+      - service_auth_db:/data
+    ports:
+      - "50051:50051"
+    depends_on:
+      service_auth_migrate:
+        condition: service_completed_successfully
+
+  service_auth_worker:
+    build: ..
+    command: uv run python example/service_auth/manage.py eventbus_worker
+    environment: *service_auth_env
+    volumes:
+      - service_auth_db:/data
+    depends_on:
+      redis:
+        condition: service_started
+      service_auth_migrate:
+        condition: service_completed_successfully
+
+  service_order_migrate:
+    build: ..
+    command: uv run python example/service_order/manage.py migrate
+    environment: *service_order_env
+    volumes:
+      - service_order_db:/data
+    depends_on:
+      - redis
+
+  service_order_http:
+    build: ..
+    command: uv run python example/service_order/manage.py runserver 0.0.0.0:8000
+    environment: *service_order_env
+    volumes:
+      - service_order_db:/data
+    ports:
+      - "8002:8000"
+    depends_on:
+      redis:
+        condition: service_started
+      service_order_migrate:
+        condition: service_completed_successfully
+
+  service_order_worker:
+    build: ..
+    command: uv run python example/service_order/manage.py eventbus_worker
+    environment: *service_order_env
+    volumes:
+      - service_order_db:/data
+    depends_on:
+      redis:
+        condition: service_started
+      service_order_migrate:
+        condition: service_completed_successfully
+
+volumes:
+  service_auth_db:
+  service_order_db:

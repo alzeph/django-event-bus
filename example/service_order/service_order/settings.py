@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -15,33 +16,60 @@ INSTALLED_APPS = [
 MIDDLEWARE = []
 ROOT_URLCONF = "service_order.urls"
 
+# SQLITE_PATH: voir le commentaire équivalent dans
+# service_auth/settings.py (nécessaire pour le volume Docker Compose).
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": os.environ.get("SQLITE_PATH", str(BASE_DIR / "db.sqlite3")),
     }
 }
 
 USE_TZ = True
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Cache PARTAGÉ: voir le commentaire équivalent dans
+# service_auth/settings.py — sans lui, l'invalidation faite par
+# eventbus_worker n'aurait aucun effet sur le cache de runserver.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.environ.get("CACHE_REDIS_URL", "redis://localhost:6379/1"),
+    }
+}
+
 # Ce service ne connaît ni le code ni l'URL de service_auth: il ne
 # s'abonne qu'à un nom d'événement ("auth.user_created").
 EVENT_BUS = {
     "SERVICE_NAME": "service_order",
     "BACKEND": "django_event_bus.brokers.redis_streams.RedisStreamsBroker",
-    "OPTIONS": {"URL": "redis://localhost:6379/0", "BLOCK_MS": 2000},
+    "OPTIONS": {
+        "URL": os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+        "BLOCK_MS": 2000,
+    },
 }
 
-# L'URL de service_auth n'est configurée qu'ici, une seule fois: le code
-# applicatif (orders/models.py) ne fait que "RemoteForeignKey(service=
-# "service_auth", resource="users")" et order.user.email, sans jamais
-# manipuler d'URL, de client HTTP ou de canal gRPC.
+# SERVICE_AUTH_HTTP_BASE_URL/SERVICE_AUTH_GRPC_TARGET: valeurs par
+# défaut = ce qu'il faut pour lancer les process à la main sur
+# localhost (voir le README). En Docker Compose, ces variables sont
+# redéfinies avec les noms de service du réseau interne — c'est le seul
+# endroit qui change entre les deux façons de lancer la démo.
+#
+# Ce service est aussi SOURCE de données (orders/resources.py, lu par
+# service_auth via OrderBookmark — sens 2 de la démo).
 REMOTE_DATA = {
     "SERVICE_REGISTRY": {
         "service_auth": {
-            "http": {"base_url": "http://localhost:8001/api", "timeout": 3},
-            "grpc": {"target": "localhost:50051", "timeout": 3},
+            "http": {
+                "base_url": os.environ.get(
+                    "SERVICE_AUTH_HTTP_BASE_URL", "http://localhost:8001/api"
+                ),
+                "timeout": 3,
+            },
+            "grpc": {
+                "target": os.environ.get("SERVICE_AUTH_GRPC_TARGET", "localhost:50051"),
+                "timeout": 3,
+            },
         },
     },
     # "http" par défaut ; passez à "grpc" pour basculer sur l'autre

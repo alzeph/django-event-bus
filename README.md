@@ -203,6 +203,29 @@ order.user.email   # -> cache Django, sinon HTTP/gRPC vers service_auth
   indisponible doit être visible par votre code, pas masquée derrière
   un `None` ambigu.
 
+> **Piège classique : le cache doit être partagé entre process.**
+> Sans `CACHES` explicite, Django utilise `locmem` — un cache **en
+> mémoire du process**. Un service tourne presque toujours en plusieurs
+> process (le serveur web, `eventbus_worker`, `remote_grpc_server`, un
+> `manage.py shell` ponctuel) : avec `locmem`, chacun a sa propre
+> mémoire isolée, et l'invalidation faite par `eventbus_worker` (section
+> "Invalidation par événement" plus bas) n'a **aucun effet visible** sur
+> le cache vu par le serveur web — sans la moindre erreur, juste une
+> donnée qui ne se rafraîchit jamais. Utilisez un cache réellement
+> partagé, par exemple Redis (Django ≥ 4.0 fournit un backend natif) :
+> ```python
+> CACHES = {
+>     "default": {
+>         "BACKEND": "django.core.cache.backends.redis.RedisCache",
+>         "LOCATION": "redis://localhost:6379/1",
+>     }
+> }
+> ```
+> C'est exactement ce que fait `example/` (voir plus bas) — ce piège y a
+> été découvert et corrigé en vérifiant la démo avec des process
+> persistants plutôt qu'un `manage.py shell` relancé à chaque étape (qui
+> masque le problème : un process neuf a de toute façon un cache froid).
+
 ## 3. Exposer ses données (`@expose_resource`)
 
 ### Le problème, concrètement
@@ -342,35 +365,98 @@ worker (`manage.py eventbus_worker`) tourne côté service consommateur**
 
 ## Démo à deux services : tout essayer pour de vrai
 
-`example/` contient `service_auth` (fournisseur : publie des événements,
-expose l'utilisateur) et `service_order` (consommateur : reçoit les
-événements, lit l'utilisateur via `RemoteForeignKey`). Tout ce qui
-précède y est mis en œuvre :
+`example/` contient `service_auth` et `service_order`, et l'échange de
+données s'y fait **dans les deux sens** — ce n'est pas qu'un service qui
+lit l'autre :
 
-- `service_auth/accounts/events.py` — publie `auth.user_created`/`auth.user_updated`
-- `service_auth/accounts/resources.py` — expose `User` en HTTP et gRPC
-- `service_order/orders/models.py` — `Order.user_id` en `RemoteForeignKey`
-- `service_order/orders/events.py` — un `@receiver` qui trace les événements reçus
+| | expose (fournisseur) | consomme (`RemoteForeignKey`) | événements publiés |
+|---|---|---|---|
+| `service_auth` | `User` (`accounts/resources.py`, HTTP+gRPC) | `OrderBookmark.order_id` → `service_order` (`accounts/models.py`) | `auth.user_created`/`auth.user_updated` |
+| `service_order` | `Order` (`orders/resources.py`, HTTP) | `Order.user_id` → `service_auth` (`orders/models.py`) | `orders.order_created`/`orders.order_updated` |
+
+Chaque service a aussi une vue "dashboard" consultable au navigateur/curl
+qui affiche ses données locales **et** la donnée résolue à distance
+côte à côte (`accounts/views.py`, `orders/views.py`) — la preuve visuelle
+que la résolution fonctionne, pas seulement en shell.
+
+### Option A (recommandée) : tout en une commande avec Docker
 
 ```sh
-# Terminal 1: Redis (le seul composant d'infra nécessaire)
-docker compose -f example/docker-compose.yml up -d
+docker compose -f example/docker-compose.yml up -d --build
+```
 
-# Une fois, pour créer les bases sqlite de la démo
+Une seule image (`Dockerfile` à la racine) sert de base à sept
+conteneurs : Redis, un `_migrate` jetable par service (applique les
+migrations puis s'arrête — les autres attendent sa réussite pour éviter
+des migrations concurrentes sur le même fichier SQLite), et les process
+`_http`/`_grpc`/`_worker` de chaque service. Rien à lancer à la main.
+`docker compose -f example/docker-compose.yml ps` doit montrer six
+conteneurs `Up` (les deux `_migrate` se terminent, c'est normal).
+
+Créez les données via `docker compose exec` (un `manage.py shell` normal, dans le conteneur) :
+
+```sh
+echo "
+from django.contrib.auth.models import User
+User.objects.create_user(username='bob', email='bob@example.com', password='x')
+" | docker compose -f example/docker-compose.yml exec -T service_auth_http \
+    uv run python example/service_auth/manage.py shell
+
+echo "
+from orders.models import Order
+Order.objects.create(reference='ORD-1', user_id=1)
+" | docker compose -f example/docker-compose.yml exec -T service_order_http \
+    uv run python example/service_order/manage.py shell
+
+echo "
+from django.contrib.auth.models import User
+from accounts.models import OrderBookmark
+OrderBookmark.objects.create(user=User.objects.get(pk=1), order_id=1)
+" | docker compose -f example/docker-compose.yml exec -T service_auth_http \
+    uv run python example/service_auth/manage.py shell
+```
+
+Puis consultez les deux dashboards :
+
+```sh
+curl http://localhost:8002/orders/1/dashboard/      # sens service_order -> service_auth
+curl http://localhost:8001/accounts/1/dashboard/    # sens service_auth -> service_order
+```
+
+Chacun affiche ses données locales et celles résolues à distance.
+Modifiez l'un ou l'autre (même schéma `echo ... | docker compose exec ...
+manage.py shell`, `User.objects.get(pk=1).email = "..."; .save()` ou
+`Order.objects.get(pk=1).reference = "..."; .save()`) puis rechargez les
+deux `curl` : chaque dashboard reflète la valeur à jour, invalidée par
+l'événement publié par l'autre service — **sans redémarrer aucun
+conteneur**.
+
+Pour arrêter et tout nettoyer : `docker compose -f example/docker-compose.yml down -v`.
+
+### Option B : à la main, pas à pas, pour comprendre chaque brique
+
+```sh
+# Terminal 1: Redis
+docker compose -f example/docker-compose.yml up -d redis
+
+# Une fois, pour créer les bases sqlite
 uv run python example/service_auth/manage.py migrate
 uv run python example/service_order/manage.py migrate
 
 # Terminal 2: service_auth répond en HTTP sur :8001
 uv run python example/service_auth/manage.py runserver 8001
-
 # Terminal 3: service_auth répond aussi en gRPC sur :50051
 uv run python example/service_auth/manage.py remote_grpc_server --port 50051
+# Terminal 4: service_auth consomme orders.order_updated (sens 2)
+uv run python example/service_auth/manage.py eventbus_worker
 
-# Terminal 4: service_order consomme les événements du bus
+# Terminal 5: service_order répond en HTTP sur :8002
+uv run python example/service_order/manage.py runserver 8002
+# Terminal 6: service_order consomme auth.user_created/user_updated (sens 1)
 uv run python example/service_order/manage.py eventbus_worker
 ```
 
-**Étape A — un événement traverse le bus.** Dans un 5e terminal :
+**Étape A — un événement traverse le bus (sens 1).** Dans un 7e terminal :
 
 ```
 uv run python example/service_auth/manage.py shell
@@ -378,24 +464,32 @@ uv run python example/service_auth/manage.py shell
 >>> User.objects.create_user(username="bob", email="bob@example.com", password="x")
 ```
 
-`service_auth` publie `auth.user_created` ; le worker du terminal 4 le
-consomme et persiste un `ReceivedEvent` — regardez son terminal, une
-ligne apparaît. `service_order` n'a jamais importé une seule ligne de
-code de `service_auth` pour que ça fonctionne.
+`service_auth` publie `auth.user_created` ; le worker du terminal 6 le
+consomme et persiste un `ReceivedEvent`. `service_order` n'a jamais
+importé une seule ligne de code de `service_auth` pour que ça fonctionne.
 
-**Étape B — `RemoteForeignKey` résout via HTTP.**
+**Étape B — `RemoteForeignKey` résout via HTTP, dans les deux sens.**
 
 ```
 uv run python example/service_order/manage.py shell
 >>> from orders.models import Order
 >>> order = Order.objects.create(reference="ORD-1", user_id=1)
->>> order.user.email          # requête HTTP vers :8001, réponse mise en cache
-'bob@example.com'
->>> order.user.email          # cache: aucune requête HTTP cette fois
+>>> order.user.email
 'bob@example.com'
 ```
 
-**Étape C — invalidation par événement.** Toujours dans `service_auth` :
+```
+uv run python example/service_auth/manage.py shell
+>>> from django.contrib.auth.models import User
+>>> from accounts.models import OrderBookmark
+>>> OrderBookmark.objects.create(user=User.objects.get(pk=1), order_id=1)
+```
+
+Consultez les deux dashboards dans un navigateur (ou `curl`) :
+`http://localhost:8002/orders/1/dashboard/` et
+`http://localhost:8001/accounts/1/dashboard/`.
+
+**Étape C — invalidation par événement, dans les deux sens.** Toujours dans un shell `service_auth` :
 
 ```
 >>> u = User.objects.get(username="bob")
@@ -403,16 +497,20 @@ uv run python example/service_order/manage.py shell
 >>> u.save()
 ```
 
-Ça publie `auth.user_updated`. Le worker (terminal 4) le consomme et
-invalide le cache de cet utilisateur. Dans le shell `service_order` :
+Et dans un shell `service_order` :
 
 ```
->>> order.user.email          # le cache a été vidé: nouvelle requête HTTP
-'bob.nouveau@example.com'
+>>> order.reference = "ORD-1-v2"
+>>> order.save()
 ```
 
-**Étape D — le même `order.user` fonctionne en gRPC.** Toujours dans le
-shell `service_order` :
+Chaque `.save()` publie un événement (`auth.user_updated` /
+`orders.order_updated`) que le worker de l'*autre* service consomme
+pour invalider son cache. **Rechargez les deux dashboards** (`curl` ou
+navigateur, sans relancer aucun process) : les deux reflètent
+maintenant les valeurs à jour.
+
+**Étape D — le même `order.user` fonctionne en gRPC.** Dans le shell `service_order` :
 
 ```
 >>> from django.test import override_settings
