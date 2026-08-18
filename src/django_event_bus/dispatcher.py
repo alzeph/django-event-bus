@@ -1,3 +1,8 @@
+"""Dispatch d'une enveloppe reçue vers les receivers enregistrés.
+
+Dispatching a received envelope to the registered receivers.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -10,9 +15,15 @@ logger = logging.getLogger("django_event_bus.dispatcher")
 
 
 def dispatch(broker: BaseBroker, envelope: EventEnvelope) -> bool:
-    """Exécute les receivers enregistrés pour `envelope`, puis ack/fail
-    auprès du broker selon le résultat. Retourne True si le traitement a
-    réussi (utilisé par le worker et testable indépendamment de lui).
+    """Exécute les receivers de ``envelope``, puis ``ack``/``fail`` auprès du broker.
+
+    Renvoie ``True`` si le traitement a réussi (utilisé par le worker, et
+    testable indépendamment de lui).
+
+    Runs ``envelope``'s receivers, then ``ack``/``fail``s with the broker.
+
+    Returns ``True`` if the processing succeeded (used by the worker, and
+    testable independently of it).
     """
     succeeded = True
     for handler in get_receivers(envelope.event_type):

@@ -1,3 +1,8 @@
+"""Commande ``manage.py eventbus_worker``.
+
+``manage.py eventbus_worker`` command.
+"""
+
 from __future__ import annotations
 
 import signal
@@ -12,6 +17,11 @@ from django_event_bus.settings import app_settings
 
 
 class Command(BaseCommand):
+    """Consomme en boucle les événements auxquels ce service est abonné.
+
+    Consumes, in a loop, the events this service is subscribed to.
+    """
+
     help = (
         "Démarre un worker qui consomme les événements inter-services "
         "auxquels ce service est abonné (voir les events.py des apps "
@@ -19,6 +29,10 @@ class Command(BaseCommand):
     )
 
     def handle(self, *args: Any, **options: Any) -> None:
+        """Boucle bloquante de consommation, arrêt propre sur SIGINT/SIGTERM.
+
+        Blocking consumption loop, clean shutdown on SIGINT/SIGTERM.
+        """
         event_types = registered_event_types()
         if not event_types:
             self.stdout.write(
@@ -36,7 +50,8 @@ class Command(BaseCommand):
         broker = get_broker()
         self.stdout.write(
             self.style.SUCCESS(
-                f"[{app_settings.SERVICE_NAME}] en écoute sur: {', '.join(sorted(event_types))}"
+                f"[{app_settings.SERVICE_NAME}] en écoute sur: "
+                f"{', '.join(sorted(event_types))}"
             )
         )
         try:
@@ -49,4 +64,8 @@ class Command(BaseCommand):
             self.stdout.write("Worker arrêté.")
 
     def _request_stop(self, signum: int, frame: Any) -> None:
+        """Positionne le drapeau d'arrêt lu par la boucle de consommation.
+
+        Sets the stop flag read by the consumption loop.
+        """
         self._stop = True

@@ -1,0 +1,32 @@
+// Contrat gRPC generique de recuperation de donnees inter-services.
+// Un seul RPC, GetResource, pour ne pas exiger un .proto par service:
+// n'importe quel service peut l'implementer en sous-classant
+// RemoteResourceServicer (voir remote/grpc_server.py) sans ecrire de
+// definition protobuf propre. La donnee est transportee sous forme de
+// google.protobuf.Struct (equivalent d'un objet JSON dynamique).
+//
+// Generic gRPC contract for inter-service data retrieval.
+// A single RPC, GetResource, so no service needs its own .proto: any
+// service can implement it by subclassing RemoteResourceServicer (see
+// remote/grpc_server.py) without writing its own protobuf definition.
+// Data is carried as a google.protobuf.Struct (dynamic JSON-like object).
+
+syntax = "proto3";
+
+package django_event_bus.remote;
+
+import "google/protobuf/struct.proto";
+
+message ResourceRequest {
+    string resource = 1;
+    string pk = 2;
+}
+
+message ResourceResponse {
+    bool found = 1;
+    google.protobuf.Struct data = 2;
+}
+
+service RemoteResourceService {
+    rpc GetResource(ResourceRequest) returns (ResourceResponse);
+}

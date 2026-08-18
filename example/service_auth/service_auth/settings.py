@@ -33,3 +33,10 @@ EVENT_BUS = {
     "BACKEND": "django_event_bus.brokers.redis_streams.RedisStreamsBroker",
     "OPTIONS": {"URL": "redis://localhost:6379/0"},
 }
+
+# Ce service est ici la SOURCE de données: il n'a pas besoin de
+# SERVICE_REGISTRY (il ne consomme aucun RemoteForeignKey lui-même),
+# juste d'un résolveur gRPC pour manage.py remote_grpc_server.
+REMOTE_DATA = {
+    "GRPC_RESOLVER": "accounts.grpc_resolver.resolve",
+}

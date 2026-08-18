@@ -7,6 +7,9 @@ requires-python = ">=3.13"
 dependencies = [
     "django>=4.2",
     "redis>=5.0",
+    "requests>=2.31",
+    "grpcio>=1.60",
+    "protobuf>=4.25",
 ]
 
 [dependency-groups]
@@ -14,6 +17,10 @@ dev = [
     "pytest>=8.0",
     "pytest-django>=4.8",
     "ruff>=0.6",
+    "mypy>=1.10",
+    "django-stubs>=5.0",
+    "requests-mock>=1.12",
+    "grpcio-tools>=1.60",
 ]
 
 [build-system]
@@ -24,7 +31,35 @@ build-backend = "hatchling.build"
 packages = ["src/django_event_bus"]
 
 [tool.ruff]
-extend-exclude = ["**/migrations/*"]
+extend-exclude = ["**/migrations/*", "**/*_pb2.py", "**/*_pb2.pyi", "**/*_pb2_grpc.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "C4", "RUF", "BLE", "A", "D"]
+ignore = [
+    "D203", # incompatible avec D211 (ligne vide avant docstring de classe)
+    "D213", # incompatible avec D212 (résumé sur la première ligne)
+    "D401", # heuristique anglaise (mode impératif) inadaptée à des résumés en français
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+"example/**" = ["D"]
+
+[tool.mypy]
+python_version = "3.13"
+mypy_path = "src"
+plugins = ["mypy_django_plugin.main"]
+warn_unused_configs = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+exclude = ["_pb2\\.py$", "_pb2_grpc\\.py$"]
+
+[tool.django-stubs]
+django_settings_module = "tests.settings"
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "tests.settings"

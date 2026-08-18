@@ -1,12 +1,12 @@
 import pytest
 from django.test import override_settings
 
-from django_event_bus.exceptions import ImproperlyConfigured
+from django_event_bus.exceptions import ImproperlyConfiguredError
 from django_event_bus.settings import app_settings
 
 
 def test_missing_service_name_raises_improperly_configured():
-    with override_settings(EVENT_BUS={}), pytest.raises(ImproperlyConfigured):
+    with override_settings(EVENT_BUS={}), pytest.raises(ImproperlyConfiguredError):
         _ = app_settings.SERVICE_NAME
 
 

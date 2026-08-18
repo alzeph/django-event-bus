@@ -11,3 +11,6 @@ wheels/
 
 # Bases de démo locales (example/service_*)
 db.sqlite3
+
+# Outillage qualité
+.mypy_cache/

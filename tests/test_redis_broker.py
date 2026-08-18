@@ -42,7 +42,9 @@ def test_publish_and_consume_round_trip():
     consumer = broker.listen({event_type})
 
     broker.publish(
-        EventEnvelope(event_type=event_type, source_service="itest_service", payload={"n": 1})
+        EventEnvelope(
+            event_type=event_type, source_service="itest_service", payload={"n": 1}
+        )
     )
     envelope = next(consumer)
 
@@ -66,7 +68,9 @@ def test_failed_handler_is_dead_lettered_after_max_retries():
     )
     consumer = broker.listen({event_type})
 
-    broker.publish(EventEnvelope(event_type=event_type, source_service="itest_service", payload={}))
+    broker.publish(
+        EventEnvelope(event_type=event_type, source_service="itest_service", payload={})
+    )
     envelope = next(consumer)
 
     assert dispatch(broker, envelope) is False
