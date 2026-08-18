@@ -56,7 +56,7 @@ EVENT_BUS = {
 # endroit qui change entre les deux façons de lancer la démo.
 #
 # Ce service est aussi SOURCE de données (orders/resources.py, lu par
-# service_auth via OrderBookmark — sens 2 de la démo).
+# service_auth via OrderBookmark).
 REMOTE_DATA = {
     "SERVICE_REGISTRY": {
         "service_auth": {

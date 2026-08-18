@@ -2,9 +2,7 @@
 
 Autodécouvert au démarrage (comme events.py) : cette seule déclaration
 suffit à répondre aux requêtes HTTP *et* gRPC de service_order, sans
-qu'aucune vue ni aucun résolveur gRPC n'ait besoin d'être écrit à la
-main (contrairement à une première version de cette démo qui avait un
-views.py et un grpc_resolver.py séparés, dupliquant la même logique).
+qu'aucune vue ni aucun résolveur gRPC n'ait besoin d'être écrit à la main.
 """
 
 from django.contrib.auth.models import User

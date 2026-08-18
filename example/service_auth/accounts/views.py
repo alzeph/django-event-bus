@@ -53,11 +53,11 @@ def account_list(request):
 def account_dashboard(request, pk):
     """Rend l'utilisateur local et la commande épinglée résolue côté service_order.
 
-    Preuve visuelle du sens 2 (service_auth lit service_order): ce
-    module ne connaît que `bookmark.order_id` ; `bookmark.order` fait le
-    reste — voir accounts/models.py::OrderBookmark. Les deux formulaires
-    ci-dessous déclenchent respectivement `auth.user_updated` (via
-    post_save, voir events.py) et un simple set du bookmark local.
+    Ce module ne connaît que `bookmark.order_id` ; `bookmark.order` fait
+    la résolution à distance — voir accounts/models.py::OrderBookmark.
+    Les deux formulaires ci-dessous déclenchent respectivement
+    `auth.user_updated` (via post_save, voir events.py) et un simple set
+    du bookmark local.
     """
     try:
         user = User.objects.get(pk=pk)

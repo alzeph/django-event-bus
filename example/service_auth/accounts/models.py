@@ -5,7 +5,7 @@ from django_event_bus.remote import RemoteForeignKey
 
 
 class OrderBookmark(models.Model):
-    """Sens 2 de la démo: service_auth lit une donnée détenue par service_order.
+    """Associe un utilisateur à une commande détenue par service_order.
 
     Illustre "la dernière commande épinglée par un utilisateur" — un
     exemple plausible où le service d'authentification a besoin

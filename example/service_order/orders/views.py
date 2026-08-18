@@ -52,11 +52,11 @@ def order_list(request):
 def order_dashboard(request, pk):
     """Rend la commande locale et l'utilisateur résolu à distance côté service_auth.
 
-    Preuve visuelle du sens 1 (service_order lit service_auth): la
-    seule chose que ce module connaît de l'utilisateur est
-    `order.user_id` ; `order.user` fait le reste (cache, sinon HTTP/gRPC
-    vers service_auth) — voir orders/models.py. Le formulaire ci-dessous
-    déclenche `orders.order_updated` (via post_save, voir events.py).
+    La seule chose que ce module connaît de l'utilisateur est
+    `order.user_id` ; `order.user` fait la résolution à distance (cache,
+    sinon HTTP/gRPC vers service_auth) — voir orders/models.py. Le
+    formulaire ci-dessous déclenche `orders.order_updated` (via
+    post_save, voir events.py).
     """
     try:
         order = Order.objects.get(pk=pk)

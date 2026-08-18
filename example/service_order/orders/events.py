@@ -6,7 +6,6 @@ from django_event_bus import RemoteSignal, receiver
 from .models import Order, ReceivedEvent
 
 
-# Sens 1 (déjà en place): service_order écoute service_auth.
 @receiver("auth.user_created")
 def on_user_created(payload, envelope, **kwargs):
     """service_order n'importe rien de service_auth: il ne connaît que le
@@ -17,9 +16,8 @@ def on_user_created(payload, envelope, **kwargs):
     )
 
 
-# Sens 2 (nouveau): service_order publie à son tour, exactement le même
-# pattern que service_auth/accounts/events.py — c'est ce qui permet à
-# service_auth de savoir qu'une commande épinglée (OrderBookmark) a
+# Même pattern que service_auth/accounts/events.py: c'est ce qui permet
+# à service_auth de savoir qu'une commande épinglée (OrderBookmark) a
 # changé et d'invalider son cache RemoteForeignKey.
 order_created = RemoteSignal("orders.order_created")
 order_updated = RemoteSignal("orders.order_updated")
