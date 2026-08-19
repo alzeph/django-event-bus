@@ -82,7 +82,14 @@ class GRPCTransport(BaseTransport):
         # JSON, pas google.protobuf.Struct: Struct force tout nombre en
         # double et convertirait silencieusement un entier en flottant
         # (perte de précision au-delà de 2^53) — voir remote_resource.proto.
-        return json.loads(response.data_json)
+        try:
+            return json.loads(response.data_json)
+        except ValueError as exc:
+            raise RemoteServiceUnavailableError(
+                f"'{service}' a répondu un JSON invalide pour la ressource "
+                f"'{resource}' / responded invalid JSON for resource "
+                f"'{resource}': {exc}"
+            ) from exc
 
     def close(self) -> None:
         """Ferme tous les canaux ouverts.

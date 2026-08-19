@@ -25,8 +25,9 @@ def dispatch(broker: BaseBroker, envelope: EventEnvelope) -> bool:
     Returns ``True`` if the processing succeeded (used by the worker, and
     testable independently of it).
     """
-    succeeded = True
-    for handler in get_receivers(envelope.event_type):
+    receivers = get_receivers(envelope.event_type)
+    failed_count = 0
+    for handler in receivers:
         try:
             handler(payload=envelope.payload, envelope=envelope)
         except Exception:
@@ -36,10 +37,35 @@ def dispatch(broker: BaseBroker, envelope: EventEnvelope) -> bool:
                 envelope.event_type,
                 envelope.event_id,
             )
-            succeeded = False
+            failed_count += 1
 
+    succeeded = failed_count == 0
     if succeeded:
         broker.ack(envelope)
     else:
+        if failed_count < len(receivers):
+            # Le broker ne connaît que l'enveloppe, pas quel receiver a
+            # échoué: une ré-émission relance TOUS les receivers, y
+            # compris ceux ayant déjà réussi ci-dessus.
+            #
+            # The broker only knows about the envelope, not which
+            # receiver failed: a redelivery re-runs ALL receivers,
+            # including the ones that already succeeded above.
+            logger.warning(
+                "%s/%s receivers ont échoué pour %s (%s): la ré-émission "
+                "relancera TOUS les receivers, y compris ceux ayant déjà "
+                "réussi — assurez-vous qu'ils sont idempotents / "
+                "%s/%s receivers failed for %s (%s): the redelivery will "
+                "re-run ALL receivers, including ones that already "
+                "succeeded — make sure they are idempotent.",
+                failed_count,
+                len(receivers),
+                envelope.event_type,
+                envelope.event_id,
+                failed_count,
+                len(receivers),
+                envelope.event_type,
+                envelope.event_id,
+            )
         broker.fail(envelope)
     return succeeded
