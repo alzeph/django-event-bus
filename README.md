@@ -1,30 +1,41 @@
 # django-event-bus
 
-## Le problème que ça résout
+English · [Français](README.fr.md)
 
-Dans une architecture microservices Django (`service_auth`, `service_order`,
-`service_product`, ...), deux besoins reviennent tout le temps :
+[![CI](https://github.com/alzeph/django-event-bus/actions/workflows/ci.yml/badge.svg)](https://github.com/alzeph/django-event-bus/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/django-event-bus.svg)](https://pypi.org/project/django-event-bus/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](pyproject.toml)
 
-1. **Prévenir les autres services** qu'un événement métier a eu lieu (un
-   utilisateur créé, une commande payée, ...) — sans que chaque service
-   n'ait à configurer Redis/Kafka lui-même, ni à connaître qui écoute.
-2. **Lire une donnée détenue par un autre service** à partir de son PK
-   (l'email d'un utilisateur pour afficher une commande, par exemple) —
-   sans écrire de client HTTP à la main ni connaître l'URL du service.
+> **Release candidate.** `django-event-bus` is at `1.0.0rc1`: the API is
+> considered frozen but has not yet been battle-tested by real-world usage
+> outside this repository. Feedback (issues, use cases, bugs) is welcome
+> before the final `1.0.0` is tagged.
 
-`django-event-bus` répond aux deux avec la même philosophie que Django
-lui-même : de la configuration déclarative dans `settings.py`
-(`EVENT_BUS`, `REMOTE_DATA` — comme `DATABASES` ou `CACHES`) et des
-conventions de fichiers découvertes automatiquement (`events.py`,
-`resources.py` — comme `admin.py`), pour qu'un service n'ait quasiment
-que des déclarations à écrire, jamais de plomberie réseau.
+## The problem this solves
 
-Ce README est un parcours guidé : chaque section explique *pourquoi* la
-pièce existe avant de montrer *comment* l'utiliser. Le dossier `example/`
-contient deux vrais mini-projets Django (`service_auth`, `service_order`)
-qui font tourner tout ce qui est décrit ici — la section
-[Démo à deux services](#démo-à-deux-services-tout-essayer-pour-de-vrai)
-donne les commandes exactes à taper.
+In a Django microservices architecture (`service_auth`, `service_order`,
+`service_product`, ...), two needs keep coming up:
+
+1. **Notify other services** that a business event happened (a user
+   created, an order paid, ...) — without each service having to configure
+   Redis/Kafka itself, or know who's listening.
+2. **Read data owned by another service** from its PK (a user's email to
+   display an order, for instance) — without hand-writing an HTTP client
+   or knowing that service's URL.
+
+`django-event-bus` answers both with the same philosophy as Django
+itself: declarative configuration in `settings.py` (`EVENT_BUS`,
+`REMOTE_DATA` — like `DATABASES` or `CACHES`) and auto-discovered file
+conventions (`events.py`, `resources.py` — like `admin.py`), so a service
+has almost nothing but declarations to write, never network plumbing.
+
+This README is a guided tour: each section explains *why* a piece exists
+before showing *how* to use it. The `example/` folder contains two real
+Django mini-projects (`service_auth`, `service_order`) that run
+everything described here — the
+[Two-service demo](#two-service-demo-try-it-all-for-real) section gives
+the exact commands to run.
 
 ## Installation
 
@@ -35,49 +46,47 @@ INSTALLED_APPS = [
 ]
 ```
 
-C'est tout pour l'installation : pas de migration propre à la librairie,
-pas de modèle. Le reste de ce README explique les deux settings
-optionnels (`EVENT_BUS`, `REMOTE_DATA`) et les conventions de fichiers
-qu'ils activent.
+That's it for installation: no migration of its own, no model. The rest
+of this README explains the two optional settings (`EVENT_BUS`,
+`REMOTE_DATA`) and the file conventions they activate.
 
-## 1. Émettre et recevoir des événements
+## 1. Emitting and receiving events
 
-### Configurer le bus
+### Configuring the bus
 
 ```python
 EVENT_BUS = {
-    "SERVICE_NAME": "service_auth",  # obligatoire: identifie ce service dans les logs/erreurs
+    "SERVICE_NAME": "service_auth",  # required: identifies this service in logs/errors
     "BACKEND": "django_event_bus.brokers.redis_streams.RedisStreamsBroker",
     "OPTIONS": {"URL": "redis://localhost:6379/0"},
 }
 ```
 
-`BACKEND` est le seul endroit où le broker est choisi. Le backend par
-défaut, `django_event_bus.brokers.locmem.LocMemBroker`, ne nécessite
-aucune infra (utile en tests/dev — c'est lui qui est utilisé si vous ne
-mettez pas `EVENT_BUS` du tout, sauf `SERVICE_NAME` qui reste
-obligatoire). Passer à Redis, ou demain à un autre broker qui
-implémenterait la même interface, ne change **que** ce dict — aucun
-code applicatif à toucher.
+`BACKEND` is the only place where the broker is chosen. The default
+backend, `django_event_bus.brokers.locmem.LocMemBroker`, needs no infra
+(useful in tests/dev — it's what's used if you don't set `EVENT_BUS` at
+all, except `SERVICE_NAME` which stays required). Switching to Redis, or
+tomorrow to another broker implementing the same interface, changes
+**only** this dict — no application code to touch.
 
-### Émettre un événement
+### Emitting an event
 
 ```python
 # accounts/events.py
 from django_event_bus import RemoteSignal
 
-# Déclaré une fois au niveau module, comme un django.dispatch.Signal.
+# Declared once at module level, like a django.dispatch.Signal.
 user_created = RemoteSignal("auth.user_created")
 
-# Puis, n'importe où (une vue, un signal post_save, une tâche, ...):
+# Then, anywhere (a view, a post_save signal, a task, ...):
 user_created.send(payload={"id": user.id, "email": user.email})
 ```
 
-La convention de nom `"{service}.{événement}"` (`auth.user_created`)
-évite les collisions entre services : chacun préfixe ses événements par
-son propre nom.
+The `"{service}.{event}"` naming convention (`auth.user_created`) avoids
+collisions between services: each one prefixes its events with its own
+name.
 
-### Recevoir un événement (dans un autre service)
+### Receiving an event (in another service)
 
 ```python
 # orders/events.py
@@ -88,71 +97,68 @@ def on_user_created(payload, envelope, **kwargs):
     ...
 ```
 
-Tout fichier `events.py` d'une app installée est découvert
-automatiquement au démarrage (même mécanisme que `admin.autodiscover()`
-— vous n'avez rien à importer manuellement ailleurs). L'abonnement se
-fait **par nom d'événement** (`"auth.user_created"`), jamais par import
-de l'objet `RemoteSignal` du service émetteur : `service_order` n'a en
-général pas accès au code de `service_auth`, donc ce serait impossible
-de toute façon. C'est cette règle — s'abonner à un nom, pas à un objet
-Python — qui permet à deux services de communiquer sans se connaître.
+Any `events.py` file in an installed app is auto-discovered at startup
+(the same mechanism as `admin.autodiscover()` — nothing to manually
+import elsewhere). Subscription happens **by event name**
+(`"auth.user_created"`), never by importing the emitting service's
+`RemoteSignal` object: `service_order` generally has no access to
+`service_auth`'s code, so that would be impossible anyway. This rule —
+subscribing to a name, not a Python object — is what lets two services
+talk without knowing each other.
 
-### Consommer les événements : le worker
+### Consuming events: the worker
 
 ```
 python manage.py eventbus_worker
 ```
 
-Démarre un worker bloquant qui consomme les `event_type` ayant un
-`@receiver` local dans ce service, exécute les receivers, acquitte en
-cas de succès, retente en cas d'échec puis déplace l'événement en
-dead-letter (`{stream}:dlq`) après `MAX_RETRIES` tentatives (backend
-Redis). C'est un process à part, à lancer en continu (comme un worker
-Celery) — un par service qui a au moins un `@receiver`.
+Starts a blocking worker that consumes the `event_type`s with a local
+`@receiver` in this service, runs the receivers, acknowledges on success,
+retries on failure, then moves the event to dead-letter (`{stream}:dlq`)
+after `MAX_RETRIES` attempts (Redis backend). It's a separate process,
+meant to run continuously (like a Celery worker) — one per service that
+has at least one `@receiver`.
 
-### `RemoteSignal.send()` et les transactions
+### `RemoteSignal.send()` and transactions
 
-`send()` publie via `transaction.on_commit()` : si l'appel a lieu dans
-une transaction (typiquement un `post_save`), l'événement n'est envoyé
-qu'après le commit effectif — jamais pour une ligne dont l'écriture a
-finalement été annulée par un rollback. Hors transaction, il part
-immédiatement.
+`send()` publishes via `transaction.on_commit()`: if the call happens
+inside a transaction (typically a `post_save`), the event is only sent
+after the actual commit — never for a row whose write was ultimately
+rolled back. Outside a transaction, it's sent immediately.
 
-**Conséquence en tests** : avec `pytest.mark.django_db` seul (rollback
-implicite en fin de test), le callback ne se déclenche jamais — utilisez
-`pytest.mark.django_db(transaction=True)` (ou la fixture pytest-django
-`django_capture_on_commit_callbacks`) pour tout test qui vérifie qu'un
-événement a bien été émis.
+**Consequence for tests**: with `pytest.mark.django_db` alone (implicit
+rollback at the end of the test), the callback never fires — use
+`pytest.mark.django_db(transaction=True)` (or the pytest-django
+`django_capture_on_commit_callbacks` fixture) for any test that checks
+an event was actually emitted.
 
-### Ce que la librairie garantit — et ce qu'elle ne garantit pas
+### What the library guarantees — and what it doesn't
 
-Le bus est **at-least-once** : un événement peut être livré plusieurs
-fois à un `@receiver` (redélivrance après un `fail()`, ou après un crash
-du worker avant l'`ack`). **Écrivez des receivers idempotents** (ex:
-`get_or_create` plutôt que `create`, ou une clé unique sur
-`envelope.event_id`).
+The bus is **at-least-once**: an event can be delivered more than once
+to a `@receiver` (redelivery after a `fail()`, or after a worker crash
+before the `ack`). **Write idempotent receivers** (e.g. `get_or_create`
+instead of `create`, or a unique key on `envelope.event_id`).
 
-`transaction.on_commit()` évite les événements "fantômes" (publiés pour
-une donnée jamais committée) mais ne protège pas d'une panne du broker
-*au moment précis du commit* : dans ce cas l'écriture DB reste committée
-mais la publication échoue et remonte comme une erreur post-commit. Pour
-une garantie zéro-perte plus forte, la solution correcte est un pattern
-*transactional outbox* (table locale + relais séparé) — hors périmètre
-de cette version.
+`transaction.on_commit()` avoids "phantom" events (published for data
+that was never committed) but doesn't protect against a broker outage
+*at the exact moment of commit*: in that case the DB write stays
+committed but the publish fails and surfaces as a post-commit error. For
+a stronger zero-loss guarantee, the correct solution is a *transactional
+outbox* pattern (local table + separate relay) — out of scope for this
+version.
 
-## 2. Lire une donnée détenue par un autre service (`RemoteForeignKey`)
+## 2. Reading data owned by another service (`RemoteForeignKey`)
 
-### Le problème, concrètement
+### The problem, concretely
 
-`service_order` a besoin d'afficher l'email du client d'une commande.
-L'utilisateur vit dans `service_auth`. Sans cette librairie, il faudrait
-écrire un client HTTP, connaître l'URL de `service_auth`, gérer le cache
-et les pannes réseau à la main, et refaire tout ça pour chaque
-ressource. `RemoteForeignKey` fait tout ça à partir d'une déclaration
-sur le modèle, comme une `ForeignKey` classique le ferait pour une
-relation locale.
+`service_order` needs to display an order's customer email. The user
+lives in `service_auth`. Without this library, you'd have to write an
+HTTP client, know `service_auth`'s URL, handle caching and network
+failures by hand, and redo all of that for every resource.
+`RemoteForeignKey` does all of it from a single declaration on the
+model, the way a regular `ForeignKey` would for a local relation.
 
-### Configurer où sont les autres services
+### Configuring where the other services are
 
 ```python
 REMOTE_DATA = {
@@ -162,15 +168,15 @@ REMOTE_DATA = {
             "grpc": {"target": "service-auth:50051", "timeout": 3},
         },
     },
-    "DEFAULT_TRANSPORT": "http",  # ou "grpc" — voir la section 3
-    "DEFAULT_TTL": 60,            # durée de cache en secondes
+    "DEFAULT_TRANSPORT": "http",  # or "grpc" — see section 3
+    "DEFAULT_TTL": 60,            # cache duration in seconds
 }
 ```
 
-**C'est le seul endroit du projet où l'URL de `service_auth` apparaît.**
-Le code applicatif (ci-dessous) ne la connaît jamais.
+**This is the only place in the project where `service_auth`'s URL
+appears.** The application code (below) never knows it.
 
-### Déclarer le champ
+### Declaring the field
 
 ```python
 # orders/models.py
@@ -178,41 +184,40 @@ from django_event_bus.remote import RemoteForeignKey
 
 class Order(models.Model):
     user_id = RemoteForeignKey(
-        service="service_auth",   # clé dans SERVICE_REGISTRY
-        resource="users",         # doit correspondre au `resource=` exposé (section 3)
-        invalidate_on=["auth.user_updated"],  # voir "Invalidation" plus bas
+        service="service_auth",   # key in SERVICE_REGISTRY
+        resource="users",         # must match the exposed `resource=` (section 3)
+        invalidate_on=["auth.user_updated"],  # see "Invalidation" below
     )
 
-order.user.email   # -> cache Django, sinon HTTP/gRPC vers service_auth
+order.user.email   # -> Django cache, otherwise HTTP/gRPC to service_auth
 ```
 
-- `user_id` est une colonne entière ordinaire : `makemigrations`/`migrate`
-  fonctionnent normalement, comme pour n'importe quel `IntegerField`.
-- `order.user` — le nom est dérivé de `user_id` en retirant le suffixe
-  `_id`, exactement comme le ferait une `ForeignKey` Django. Si votre
-  champ ne se termine pas par `_id`, l'accesseur devient
-  `{nom_du_champ}_remote` (ou donnez `accessor_name=...` explicitement).
-- L'accès à `order.user` **résout paresseusement** : d'abord le cache
-  Django (`REMOTE_DATA["CACHE_ALIAS"]`, `locmem` par défaut, un vrai
-  cache Redis en prod si vous configurez `CACHES`), puis, si absent ou
-  expiré, le transport configuré.
-- Ressource absente côté service source (404) → `order.user` vaut
-  `None`, comme une `ForeignKey` nullable non résolue. Service
-  injoignable (panne réseau, timeout) → lève
-  `RemoteServiceUnavailableError` : c'est volontaire, une donnée
-  indisponible doit être visible par votre code, pas masquée derrière
-  un `None` ambigu.
+- `user_id` is a plain integer column: `makemigrations`/`migrate` work
+  normally, just like any `IntegerField`.
+- `order.user` — the name is derived from `user_id` by dropping the
+  `_id` suffix, exactly like a Django `ForeignKey` would. If your field
+  doesn't end in `_id`, the accessor becomes `{field_name}_remote` (or
+  pass `accessor_name=...` explicitly).
+- Accessing `order.user` **resolves lazily**: first the Django cache
+  (`REMOTE_DATA["CACHE_ALIAS"]`, `locmem` by default, a real Redis cache
+  in production if you configure `CACHES`), then, if missing or expired,
+  the configured transport.
+- Resource missing on the source service (404) → `order.user` is
+  `None`, like an unresolved nullable `ForeignKey`. Service unreachable
+  (network failure, timeout) → raises `RemoteServiceUnavailableError`:
+  this is deliberate, unavailable data must be visible to your code, not
+  hidden behind an ambiguous `None`.
 
-> **Piège classique : le cache doit être partagé entre process.**
-> Sans `CACHES` explicite, Django utilise `locmem` — un cache **en
-> mémoire du process**. Un service tourne presque toujours en plusieurs
-> process (le serveur web, `eventbus_worker`, `remote_grpc_server`, un
-> `manage.py shell` ponctuel) : avec `locmem`, chacun a sa propre
-> mémoire isolée, et l'invalidation faite par `eventbus_worker` (section
-> "Invalidation par événement" plus bas) n'a **aucun effet visible** sur
-> le cache vu par le serveur web — sans la moindre erreur, juste une
-> donnée qui ne se rafraîchit jamais. Utilisez un cache réellement
-> partagé, par exemple Redis (Django ≥ 4.0 fournit un backend natif) :
+> **Classic trap: the cache must be shared across processes.**
+> Without an explicit `CACHES`, Django uses `locmem` — an **in-process**
+> cache. A service almost always runs as several processes (the web
+> server, `eventbus_worker`, `remote_grpc_server`, an occasional
+> `manage.py shell`): with `locmem`, each has its own isolated memory,
+> and the invalidation done by `eventbus_worker` (see "Event-driven
+> invalidation" below) has **no visible effect** on the cache seen by
+> the web server — silently, with no error, just data that never
+> refreshes. Use a genuinely shared cache, for example Redis (Django ≥
+> 4.0 ships a native backend):
 > ```python
 > CACHES = {
 >     "default": {
@@ -221,28 +226,27 @@ order.user.email   # -> cache Django, sinon HTTP/gRPC vers service_auth
 >     }
 > }
 > ```
-> C'est exactement ce que fait `example/` (voir plus bas) — ce piège y a
-> été découvert et corrigé en vérifiant la démo avec des process
-> persistants plutôt qu'un `manage.py shell` relancé à chaque étape (qui
-> masque le problème : un process neuf a de toute façon un cache froid).
+> This is exactly what `example/` does (see below) — this trap was
+> discovered and fixed there by verifying the demo with persistent
+> processes rather than a `manage.py shell` restarted at every step
+> (which hides the problem: a fresh process has a cold cache anyway).
 
-## 3. Exposer ses données (`@expose_resource`)
+## 3. Exposing your data (`@expose_resource`)
 
-### Le problème, concrètement
+### The problem, concretely
 
-Le point précédent suppose que `service_auth` sait répondre "voici
-l'utilisateur numéro 5" par HTTP et par gRPC. Sans mécanisme dédié, il
-faudrait écrire à la main une vue Django *et* une fonction de résolution
-gRPC, en dupliquant la même liste de champs dans les deux — pénible dès
-qu'on expose plus d'une ressource, et rapidement source d'incohérences
-(HTTP renvoie un champ que gRPC a oublié, etc.). `@expose_resource`
-résout ça avec **une seule déclaration** qui alimente les deux
-transports.
+The previous section assumes `service_auth` knows how to answer "here's
+user number 5" over HTTP and gRPC. Without a dedicated mechanism, you'd
+have to hand-write a Django view *and* a gRPC resolver function,
+duplicating the same field list in both — painful as soon as a service
+exposes more than one resource, and a quick source of inconsistencies
+(HTTP returns a field gRPC forgot, etc.). `@expose_resource` solves this
+with **a single declaration** that feeds both transports.
 
-### Déclarer une ressource
+### Declaring a resource
 
 ```python
-# accounts/resources.py — découvert automatiquement, comme events.py
+# accounts/resources.py — auto-discovered, like events.py
 from django.contrib.auth.models import User
 from django_event_bus.remote import ResourceSerializer, expose_resource
 
@@ -250,32 +254,32 @@ from django_event_bus.remote import ResourceSerializer, expose_resource
 class UserResourceSerializer(ResourceSerializer):
     class Meta:
         model = User
-        resource = "users"  # la clé attendue par RemoteForeignKey(resource=...)
+        resource = "users"  # the key expected by RemoteForeignKey(resource=...)
         fields = ["id", "username", "email", "full_name"]
 
     def get_full_name(self, instance):
-        """Champ calculé: n'existe pas sur le modèle, construit à la demande.
+        """Computed field: doesn't exist on the model, built on demand.
 
-        Convention get_<champ>, identique à SerializerMethodField de
-        Django REST Framework — familière si vous avez déjà utilisé DRF.
+        The get_<field> convention, identical to Django REST Framework's
+        SerializerMethodField — familiar if you've used DRF before.
         """
         full_name = f"{instance.first_name} {instance.last_name}".strip()
         return full_name or instance.username
 ```
 
-C'est tout : cette classe répond maintenant en HTTP et en gRPC, pour
-n'importe quel service qui a `service_auth` dans son `SERVICE_REGISTRY`.
+That's it: this class now answers over HTTP and gRPC, for any service
+that has `service_auth` in its `SERVICE_REGISTRY`.
 
-### Personnaliser `ResourceSerializer`
+### Customizing `ResourceSerializer`
 
-| Ce que vous voulez faire | Comment |
+| What you want to do | How |
 |---|---|
-| Exposer tous les champs du modèle | `fields = "__all__"` (défaut si `fields` est omis) |
-| Exposer une liste précise | `fields = ["id", "email"]` |
-| Exposer tout sauf certains champs | `exclude = ["password"]` (incompatible avec `fields` explicite) |
-| Ajouter un champ calculé / renommer un champ | une méthode `get_<champ>(self, instance)` — voir `get_full_name` ci-dessus |
-| Restreindre la requête (visibilité, `select_related`, ...) | surcharger `get_queryset(cls)` (classmethod) |
-| Contrôle total sur la forme de sortie | surcharger `to_representation(self, instance)` — ignore alors `fields`/`get_<champ>` |
+| Expose every field of the model | `fields = "__all__"` (default if `fields` is omitted) |
+| Expose a specific list | `fields = ["id", "email"]` |
+| Expose everything except some fields | `exclude = ["password"]` (mutually exclusive with an explicit `fields`) |
+| Add a computed field / rename a field | a `get_<field>(self, instance)` method — see `get_full_name` above |
+| Restrict the query (visibility, `select_related`, ...) | override `get_queryset(cls)` (classmethod) |
+| Full control over the output shape | override `to_representation(self, instance)` — bypasses `fields`/`get_<field>` |
 
 ```python
 @expose_resource
@@ -287,16 +291,16 @@ class UserResourceSerializer(ResourceSerializer):
 
     @classmethod
     def get_queryset(cls):
-        # Exemple: ne jamais exposer les comptes désactivés.
+        # Example: never expose deactivated accounts.
         return User.objects.filter(is_active=True).select_related(...)
 ```
 
-Une ressource déjà prise par une autre classe lève
-`ImproperlyConfiguredError` (deux serializers ne peuvent pas se
-disputer le même nom) ; `Meta.model`/`Meta.resource` manquants lèvent la
-même exception, tôt, plutôt qu'une erreur confuse au premier appel.
+A resource already claimed by another class raises
+`ImproperlyConfiguredError` (two serializers can't fight over the same
+name); a missing `Meta.model`/`Meta.resource` raises the same exception,
+early, rather than a confusing error on first call.
 
-### Câbler l'HTTP
+### Wiring HTTP
 
 ```python
 # service_auth/urls.py
@@ -307,32 +311,31 @@ urlpatterns = [
 ]
 ```
 
-Une seule ligne, quel que soit le nombre de ressources exposées : elle
-sert `GET /api/<resource>/<pk>/` pour toutes, avec 404 propre si la
-ressource ou le PK est inconnu.
+One line, no matter how many resources are exposed: it serves
+`GET /api/<resource>/<pk>/` for all of them, with a clean 404 if the
+resource or PK is unknown.
 
-### Câbler le gRPC
+### Wiring gRPC
 
-Aucune configuration nécessaire : dès qu'au moins une ressource est
-déclarée via `@expose_resource`, `REMOTE_DATA["GRPC_RESOLVER"]` pointe
-par défaut vers le résolveur générique de la librairie. Démarrez
-simplement le serveur :
+No configuration needed: as soon as at least one resource is declared
+via `@expose_resource`, `REMOTE_DATA["GRPC_RESOLVER"]` points by default
+to the library's generic resolver. Just start the server:
 
 ```
 python manage.py remote_grpc_server --port 50051
 ```
 
-Le contrat gRPC est volontairement unique et générique
-(`GetResource(resource, pk) -> JSON`, voir
-`django_event_bus/remote/proto/remote_resource.proto`) : aucun service
-n'a besoin d'écrire son propre `.proto`. La donnée est transportée en
-JSON plutôt qu'en `google.protobuf.Struct` — `Struct` n'a qu'un type
-numérique (`double`) et convertirait silencieusement chaque entier en
-flottant (perte de précision au-delà de 2^53) ; le JSON, lui,
-distingue `int` et `float`, comme le fait déjà le transport HTTP.
+The gRPC contract is deliberately a single, generic one
+(`GetResource(resource, pk) -> JSON`, see
+`django_event_bus/remote/proto/remote_resource.proto`): no service needs
+to write its own `.proto`. Data is carried as JSON rather than as
+`google.protobuf.Struct` — `Struct` only has one numeric type (`double`)
+and would silently turn every integer into a float (precision loss
+beyond 2^53); JSON, on the other hand, distinguishes `int` from `float`,
+just like the HTTP transport already does.
 
-Pour basculer un `RemoteForeignKey` du côté consommateur sur gRPC, sans
-rien changer côté fournisseur (même `@expose_resource`) :
+To switch a `RemoteForeignKey` to gRPC on the consumer side, without
+changing anything on the provider side (same `@expose_resource`):
 
 ```python
 REMOTE_DATA = {
@@ -341,7 +344,7 @@ REMOTE_DATA = {
 }
 ```
 
-### Invalidation par événement
+### Event-driven invalidation
 
 ```python
 user_id = RemoteForeignKey(
@@ -351,59 +354,57 @@ user_id = RemoteForeignKey(
 )
 ```
 
-Réutilise le bus d'événements (partie 1) plutôt que d'inventer un second
-mécanisme : quand `service_auth` publie l'un des `event_type` listés
-(avec le PK dans `payload["id"]` — la même convention que
-`RemoteSignal.send(payload={"id": ...})` déjà utilisée pour les
-événements métier), le cache de la ressource concernée est supprimé.
-Combiné au TTL (`DEFAULT_TTL`), ça couvre deux formes de fraîcheur : le
-TTL absorbe le cas où l'événement d'invalidation serait raté ou en
-retard (best effort), l'événement, quand il arrive, invalide
-immédiatement sans attendre l'expiration du TTL. **Ça suppose qu'un
-worker (`manage.py eventbus_worker`) tourne côté service consommateur**
-— sans worker actif, seul le TTL joue.
+Reuses the event bus (part 1) instead of inventing a second mechanism:
+when `service_auth` publishes any of the listed `event_type`s (with the
+PK in `payload["id"]` — the same convention already used by
+`RemoteSignal.send(payload={"id": ...})` for business events), the
+matching resource's cache entry is deleted. Combined with the TTL
+(`DEFAULT_TTL`), this covers two kinds of freshness: the TTL absorbs a
+missed or delayed invalidation event (best effort), and the event, when
+it arrives, invalidates immediately without waiting for the TTL to
+expire. **This assumes a worker (`manage.py eventbus_worker`) is running
+on the consumer side** — without an active worker, only the TTL applies.
 
-## Démo à deux services : tout essayer pour de vrai
+## Two-service demo: try it all for real
 
-`example/` contient `service_auth` et `service_order`, et l'échange de
-données s'y fait **dans les deux sens** — ce n'est pas qu'un service qui
-lit l'autre :
+`example/` contains `service_auth` and `service_order`, and data flows
+**in both directions** — it's not just one service reading the other:
 
-| | expose (fournisseur) | consomme (`RemoteForeignKey`) | événements publiés |
+| | exposes (provider) | consumes (`RemoteForeignKey`) | events published |
 |---|---|---|---|
 | `service_auth` | `User` (`accounts/resources.py`, HTTP+gRPC) | `OrderBookmark.order_id` → `service_order` (`accounts/models.py`) | `auth.user_created`/`auth.user_updated` |
 | `service_order` | `Order` (`orders/resources.py`, HTTP) | `Order.user_id` → `service_auth` (`orders/models.py`) | `orders.order_created`/`orders.order_updated` |
 
-Chaque service a aussi de vraies pages web, sans shell ni curl
-nécessaire : `http://localhost:8001/accounts/` et
-`http://localhost:8002/orders/` listent les comptes/commandes existants
-et ont un formulaire pour en créer — chaque création redirige vers un
-"dashboard" (`.../<pk>/dashboard/`) qui affiche les données locales **et**
-la donnée résolue à distance côte à côte, avec un formulaire pour
-modifier la valeur locale (déclenche l'événement, donc l'invalidation
-côté de l'autre service) et, côté `service_auth`, un formulaire pour
-épingler une commande par son id (`accounts/views.py`, `orders/views.py`).
+Each service also has real web pages, no shell or curl required:
+`http://localhost:8001/accounts/` and `http://localhost:8002/orders/`
+list existing accounts/orders and have a form to create one — each
+creation redirects to a "dashboard" (`.../<pk>/dashboard/`) that shows
+local data **and** the remotely resolved data side by side, with a form
+to update the local value (triggering the event, hence invalidation on
+the other service) and, on `service_auth`'s side, a form to pin an
+order by its id (`accounts/views.py`, `orders/views.py`).
 
-### Option A (recommandée) : tout en une commande avec Docker
+### Option A (recommended): everything in one command with Docker
 
 ```sh
 docker compose -f example/docker-compose.yml up -d --build
 ```
 
-Une seule image (`Dockerfile` à la racine) sert de base à sept
-conteneurs : Redis, un `_migrate` jetable par service (applique les
-migrations puis s'arrête — les autres attendent sa réussite pour éviter
-des migrations concurrentes sur le même fichier SQLite), et les process
-`_http`/`_grpc`/`_worker` de chaque service. Rien à lancer à la main.
-`docker compose -f example/docker-compose.yml ps` doit montrer six
-conteneurs `Up` (les deux `_migrate` se terminent, c'est normal).
+A single image (`Dockerfile` at the repo root) is the base for seven
+containers: Redis, a disposable `_migrate` container per service
+(applies migrations then exits — the others wait for it to succeed to
+avoid concurrent migrations on the same SQLite file), and each service's
+`_http`/`_grpc`/`_worker` processes. Nothing to start by hand.
+`docker compose -f example/docker-compose.yml ps` should show six
+containers `Up` (the two `_migrate` ones exit, which is expected).
 
-Le plus simple : ouvrez `http://localhost:8001/accounts/` et
-`http://localhost:8002/orders/` dans un navigateur, créez un compte puis
-une commande (référençant son id), et épinglez-la depuis le dashboard du
-compte — tout se fait par formulaire, aucune commande à taper.
+The simplest way: open `http://localhost:8001/accounts/` and
+`http://localhost:8002/orders/` in a browser, create an account then an
+order (referencing its id), and pin it from the account's dashboard —
+everything happens through forms, no command to type.
 
-Alternative en ligne de commande, via `docker compose exec` (un `manage.py shell` normal, dans le conteneur) :
+Command-line alternative, via `docker compose exec` (a plain
+`manage.py shell`, inside the container):
 
 ```sh
 echo "
@@ -426,47 +427,47 @@ OrderBookmark.objects.create(user=User.objects.get(pk=1), order_id=1)
     uv run python example/service_auth/manage.py shell
 ```
 
-Puis consultez les deux dashboards :
+Then check both dashboards:
 
 ```sh
-curl http://localhost:8002/orders/1/dashboard/      # sens service_order -> service_auth
-curl http://localhost:8001/accounts/1/dashboard/    # sens service_auth -> service_order
+curl http://localhost:8002/orders/1/dashboard/      # service_order -> service_auth direction
+curl http://localhost:8001/accounts/1/dashboard/    # service_auth -> service_order direction
 ```
 
-Chacun affiche ses données locales et celles résolues à distance.
-Modifiez l'un ou l'autre (même schéma `echo ... | docker compose exec ...
-manage.py shell`, `User.objects.get(pk=1).email = "..."; .save()` ou
-`Order.objects.get(pk=1).reference = "..."; .save()`) puis rechargez les
-deux `curl` : chaque dashboard reflète la valeur à jour, invalidée par
-l'événement publié par l'autre service — **sans redémarrer aucun
-conteneur**.
+Each shows its local data plus the remotely resolved one. Update either
+side (same `echo ... | docker compose exec ... manage.py shell` pattern,
+`User.objects.get(pk=1).email = "..."; .save()` or
+`Order.objects.get(pk=1).reference = "..."; .save()`) then reload both
+`curl` calls: each dashboard reflects the up-to-date value, invalidated
+by the event published by the other service — **without restarting any
+container**.
 
-Pour arrêter et tout nettoyer : `docker compose -f example/docker-compose.yml down -v`.
+To stop and clean up everything: `docker compose -f example/docker-compose.yml down -v`.
 
-### Option B : à la main, pas à pas, pour comprendre chaque brique
+### Option B: by hand, step by step, to understand each piece
 
 ```sh
 # Terminal 1: Redis
 docker compose -f example/docker-compose.yml up -d redis
 
-# Une fois, pour créer les bases sqlite
+# Once, to create the sqlite databases
 uv run python example/service_auth/manage.py migrate
 uv run python example/service_order/manage.py migrate
 
-# Terminal 2: service_auth répond en HTTP sur :8001
+# Terminal 2: service_auth answers over HTTP on :8001
 uv run python example/service_auth/manage.py runserver 8001
-# Terminal 3: service_auth répond aussi en gRPC sur :50051
+# Terminal 3: service_auth also answers over gRPC on :50051
 uv run python example/service_auth/manage.py remote_grpc_server --port 50051
-# Terminal 4: service_auth consomme orders.order_updated (sens 2)
+# Terminal 4: service_auth consumes orders.order_updated
 uv run python example/service_auth/manage.py eventbus_worker
 
-# Terminal 5: service_order répond en HTTP sur :8002
+# Terminal 5: service_order answers over HTTP on :8002
 uv run python example/service_order/manage.py runserver 8002
-# Terminal 6: service_order consomme auth.user_created/user_updated (sens 1)
+# Terminal 6: service_order consumes auth.user_created/user_updated
 uv run python example/service_order/manage.py eventbus_worker
 ```
 
-**Étape A — un événement traverse le bus (sens 1).** Dans un 7e terminal :
+**Step A — an event crosses the bus.** In a 7th terminal:
 
 ```
 uv run python example/service_auth/manage.py shell
@@ -474,11 +475,11 @@ uv run python example/service_auth/manage.py shell
 >>> User.objects.create_user(username="bob", email="bob@example.com", password="x")
 ```
 
-`service_auth` publie `auth.user_created` ; le worker du terminal 6 le
-consomme et persiste un `ReceivedEvent`. `service_order` n'a jamais
-importé une seule ligne de code de `service_auth` pour que ça fonctionne.
+`service_auth` publishes `auth.user_created`; the worker in terminal 6
+consumes it and persists a `ReceivedEvent`. `service_order` never
+imported a single line of `service_auth`'s code for this to work.
 
-**Étape B — `RemoteForeignKey` résout via HTTP, dans les deux sens.**
+**Step B — `RemoteForeignKey` resolves over HTTP, in both directions.**
 
 ```
 uv run python example/service_order/manage.py shell
@@ -495,32 +496,33 @@ uv run python example/service_auth/manage.py shell
 >>> OrderBookmark.objects.create(user=User.objects.get(pk=1), order_id=1)
 ```
 
-Consultez les deux dashboards dans un navigateur (ou `curl`) :
-`http://localhost:8002/orders/1/dashboard/` et
+Check both dashboards in a browser (or `curl`):
+`http://localhost:8002/orders/1/dashboard/` and
 `http://localhost:8001/accounts/1/dashboard/`.
 
-**Étape C — invalidation par événement, dans les deux sens.** Toujours dans un shell `service_auth` :
+**Step C — event-driven invalidation, in both directions.** Still in a
+`service_auth` shell:
 
 ```
 >>> u = User.objects.get(username="bob")
->>> u.email = "bob.nouveau@example.com"
+>>> u.email = "bob.new@example.com"
 >>> u.save()
 ```
 
-Et dans un shell `service_order` :
+And in a `service_order` shell:
 
 ```
 >>> order.reference = "ORD-1-v2"
 >>> order.save()
 ```
 
-Chaque `.save()` publie un événement (`auth.user_updated` /
-`orders.order_updated`) que le worker de l'*autre* service consomme
-pour invalider son cache. **Rechargez les deux dashboards** (`curl` ou
-navigateur, sans relancer aucun process) : les deux reflètent
-maintenant les valeurs à jour.
+Each `.save()` publishes an event (`auth.user_updated` /
+`orders.order_updated`) that the *other* service's worker consumes to
+invalidate its cache. **Reload both dashboards** (`curl` or browser,
+without restarting any process): both now reflect the up-to-date values.
 
-**Étape D — le même `order.user` fonctionne en gRPC.** Dans le shell `service_order` :
+**Step D — the same `order.user` works over gRPC.** In the
+`service_order` shell:
 
 ```
 >>> from django.test import override_settings
@@ -529,26 +531,36 @@ maintenant les valeurs à jour.
 ...     "DEFAULT_TRANSPORT": "grpc",
 ... }):
 ...     print(order.user.as_dict())
-{'id': 1, 'username': 'bob', 'email': 'bob.nouveau@example.com', 'full_name': 'bob'}
+{'id': 1, 'username': 'bob', 'email': 'bob.new@example.com', 'full_name': 'bob'}
 ```
 
-Même `@expose_resource` côté `service_auth`, transport différent côté
-`service_order` — c'est tout ce qu'il fallait changer.
+Same `@expose_resource` on `service_auth`'s side, different transport on
+`service_order`'s side — that's all that had to change.
 
 ## Tests
 
 ```
-uv run pytest                       # unitaires (LocMemBroker, FakeTransport, gRPC en mémoire) — sans infra
-docker compose -f example/docker-compose.yml up -d
-uv run pytest -m integration        # contre un vrai Redis
-uv run ruff check .                 # PEP 8 / PEP 257 (pydocstyle) / imports / nommage
-uv run mypy src                     # PEP 484/526 (typage statique)
+uv run pytest                       # unit (LocMemBroker, FakeTransport, in-memory gRPC) — no infra
+docker compose -f example/docker-compose.yml up -d redis
+uv run pytest -m integration        # against a real Redis
+uv run ruff check .                 # PEP 8 / PEP 257 (pydocstyle) / imports / naming
+uv run ruff format --check src tests example
+uv run mypy src                     # PEP 484/526 (static typing)
 ```
 
-## Régénérer les stubs gRPC
+## Regenerating the gRPC stubs
 
-Après modification de `src/django_event_bus/remote/proto/remote_resource.proto` :
+After modifying `src/django_event_bus/remote/proto/remote_resource.proto`:
 
 ```
 ./scripts/generate_grpc_stubs.sh
 ```
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute and
+[CHANGELOG.md](CHANGELOG.md) for the version history.
+
+## License
+
+[MIT](LICENSE)

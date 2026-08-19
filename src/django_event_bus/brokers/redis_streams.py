@@ -89,7 +89,9 @@ class RedisStreamsBroker(BaseBroker):
         Opens the Redis connection and reads the options above.
         """
         super().__init__(service_name=service_name, options=options)
-        self.redis = redis.Redis.from_url(options.get("URL", "redis://localhost:6379/0"))
+        self.redis = redis.Redis.from_url(
+            options.get("URL", "redis://localhost:6379/0")
+        )
         self.prefix = options.get("STREAM_PREFIX", "eventbus")
         self.max_retries = int(options.get("MAX_RETRIES", 3))
         self.block_ms = int(options.get("BLOCK_MS", 5000))

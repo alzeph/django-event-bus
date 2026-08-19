@@ -1,0 +1,28 @@
+name: Bug report
+description: Report unexpected behavior in django-event-bus
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happens? What did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: >-
+        The relevant settings (`EVENT_BUS`/`REMOTE_DATA`), model fields
+        (`RemoteForeignKey`), and/or `@expose_resource` declarations.
+      render: python
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: django-event-bus, Django, Python, broker/transport (Redis version, ...)
+    validations:
+      required: true

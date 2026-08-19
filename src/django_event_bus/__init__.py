@@ -6,4 +6,6 @@ Inter-service event bus and data retrieval for Django.
 from .envelope import EventEnvelope
 from .signals import RemoteSignal, receiver
 
-__all__ = ["EventEnvelope", "RemoteSignal", "receiver"]
+__version__ = "1.0.0rc1"
+
+__all__ = ["EventEnvelope", "RemoteSignal", "__version__", "receiver"]

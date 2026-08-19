@@ -84,7 +84,7 @@ class LazySettings:
             raise ImproperlyConfiguredError(
                 f"{self.setting_name}['{attr}'] est obligatoire / is required. "
                 "Ajoutez-le dans les settings Django du service, ex / add it to "
-                f'the service\'s Django settings, e.g.: `{self.setting_name} = '
+                f"the service's Django settings, e.g.: `{self.setting_name} = "
                 f'{{"{attr}": ...}}`.'
             )
         if isinstance(value, dict):

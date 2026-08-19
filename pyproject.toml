@@ -1,9 +1,37 @@
 [project]
 name = "django-event-bus"
-version = "0.1.0"
-description = "Bus d'événements inter-services pour architectures microservices Django, avec brokers interchangeables (Redis, puis Kafka)."
+dynamic = ["version"]
+description = "Inter-service event bus and remote data access for Django microservice architectures — pluggable brokers (Redis, more to come), RemoteForeignKey over HTTP/gRPC, and declarative resource exposure."
 readme = "README.md"
 requires-python = ">=3.13"
+license = "MIT"
+authors = [{ name = "Cédric Hervé Youan", email = "hervecedricyouan@gmail.com" }]
+keywords = [
+    "django",
+    "microservices",
+    "event-bus",
+    "events",
+    "redis",
+    "grpc",
+    "distributed",
+    "signals",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Django",
+    "Framework :: Django :: 4.2",
+    "Framework :: Django :: 5.0",
+    "Framework :: Django :: 5.1",
+    "Framework :: Django :: 5.2",
+    "Framework :: Django :: 6.0",
+    "Framework :: Django :: 6.1",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+]
 dependencies = [
     "django>=4.2",
     "redis>=5.0",
@@ -12,10 +40,15 @@ dependencies = [
     "protobuf>=4.25",
 ]
 
+[project.urls]
+Repository = "https://github.com/alzeph/django-event-bus"
+Changelog = "https://github.com/alzeph/django-event-bus/blob/main/CHANGELOG.md"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-django>=4.8",
+    "pytest-cov>=7.0",
     "ruff>=0.6",
     "mypy>=1.10",
     "django-stubs>=5.0",
@@ -27,10 +60,15 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+path = "src/django_event_bus/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/django_event_bus"]
 
 [tool.ruff]
+line-length = 88
+target-version = "py313"
 extend-exclude = ["**/migrations/*", "**/*_pb2.py", "**/*_pb2.pyi", "**/*_pb2_grpc.py"]
 
 [tool.ruff.lint]
@@ -68,3 +106,10 @@ pythonpath = ["."]
 markers = [
     "integration: needs a running Redis instance (see example/docker-compose.yml)",
 ]
+
+[tool.coverage.run]
+source = ["django_event_bus"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "pragma: no cover"]
