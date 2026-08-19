@@ -61,7 +61,13 @@ class HTTPTransport(BaseTransport):
                 f"'{service}' a répondu {response.status_code} pour {url} / "
                 f"responded {response.status_code} for {url}"
             )
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise RemoteServiceUnavailableError(
+                f"'{service}' a répondu un JSON invalide pour {url} / "
+                f"responded invalid JSON for {url}: {exc}"
+            ) from exc
 
     def close(self) -> None:
         """Rien à libérer: ``requests`` gère son propre pool de connexions.

@@ -56,6 +56,9 @@ class RedisStreamsBroker(BaseBroker):
             coupure réseau transitoire (défaut 2)
         PUBLISH_RETRY_DELAY: délai de base (secondes) entre ces tentatives,
             multiplié par le numéro de la tentative (défaut 0.2)
+        MAXLEN: longueur maximale approximative (``XADD ... MAXLEN ~``)
+            conservée par stream (flux métier et dead-letter), pour éviter
+            une croissance illimitée. ``None`` par défaut: pas de troncature.
 
     Redis backend based on Streams + consumer groups.
 
@@ -81,6 +84,9 @@ class RedisStreamsBroker(BaseBroker):
             network outage (default 2)
         PUBLISH_RETRY_DELAY: base delay (seconds) between those
             attempts, multiplied by the attempt number (default 0.2)
+        MAXLEN: approximate maximum length (``XADD ... MAXLEN ~``) kept
+            per stream (business stream and dead-letter), to avoid
+            unbounded growth. Default ``None``: no trimming.
     """
 
     def __init__(self, *, service_name: str, options: dict) -> None:
@@ -100,6 +106,7 @@ class RedisStreamsBroker(BaseBroker):
         self.consumer_name = options.get("CONSUMER_NAME", default_consumer_name)
         self.publish_retries = int(options.get("PUBLISH_RETRIES", 2))
         self.publish_retry_delay = float(options.get("PUBLISH_RETRY_DELAY", 0.2))
+        self.maxlen = options.get("MAXLEN")
         self.serializer = JSONEventSerializer()
         self._pending: dict[str, tuple[str, bytes]] = {}
 
@@ -134,7 +141,12 @@ class RedisStreamsBroker(BaseBroker):
                 # The redis-py stub types this parameter as an invariant
                 # dict[UnionKey, UnionValue]: no concretely-typed dict
                 # (even dict[str, Any]) satisfies it statically.
-                self.redis.xadd(stream, data)  # type: ignore[arg-type]
+                self.redis.xadd(
+                    stream,
+                    data,  # type: ignore[arg-type]
+                    maxlen=self.maxlen,
+                    approximate=True,
+                )
                 return
             except _TRANSIENT_REDIS_ERRORS:
                 if attempt == attempts:
@@ -147,13 +159,23 @@ class RedisStreamsBroker(BaseBroker):
                 )
                 time.sleep(self.publish_retry_delay * attempt)
 
-    def _ensure_group(self, stream: str) -> None:
+    def _ensure_group(self, stream: str, *, start_id: str = "0") -> None:
         """Crée le consumer group du stream s'il n'existe pas déjà.
 
+        ``start_id="0"`` par défaut: une création initiale (``listen()``)
+        doit lire tout l'historique du stream. ``_recover_missing_group``
+        recrée volontairement avec ``start_id="$"`` — voir sa docstring.
+
         Creates the stream's consumer group if it does not already exist.
+
+        ``start_id="0"`` by default: an initial creation (``listen()``)
+        must read the stream's full history. ``_recover_missing_group``
+        deliberately recreates with ``start_id="$"`` — see its docstring.
         """
         try:
-            self.redis.xgroup_create(stream, self.service_name, id="0", mkstream=True)
+            self.redis.xgroup_create(
+                stream, self.service_name, id=start_id, mkstream=True
+            )
         except redis.ResponseError as exc:
             if "BUSYGROUP" not in str(exc):
                 raise
@@ -260,18 +282,34 @@ class RedisStreamsBroker(BaseBroker):
     def _recover_missing_group(self, stream: str, exc: redis.ResponseError) -> None:
         """Recrée le consumer group manquant (NOGROUP), relève l'erreur sinon.
 
-        Le consumer group a pu disparaître (flush, suppression manuelle):
-        on le recrée plutôt que de planter le worker en boucle.
+        Le consumer group a pu disparaître (flush, suppression manuelle)
+        alors que le stream, lui, existe toujours: le recréer avec
+        ``start_id="0"`` (comportement d'une création initiale) rejouerait
+        alors tout l'historique du stream, y compris des messages acquittés
+        depuis longtemps — ``XACK`` retire une entrée du PEL du groupe, pas
+        du stream. On recrée donc à partir de ``"$"`` (uniquement les
+        messages à venir) pour éviter cette tempête de retraitement; le
+        prix est qu'un message publié entre la disparition du groupe et sa
+        recréation peut être manqué, un compromis déjà implicite dès lors
+        que l'état du groupe a été perdu.
 
         Recreates the missing (NOGROUP) consumer group, re-raises otherwise.
 
-        The consumer group may have disappeared (flush, manual removal):
-        it is recreated instead of crashing the worker in a loop.
+        The consumer group may have disappeared (flush, manual removal)
+        while the stream itself still exists: recreating it with
+        ``start_id="0"`` (initial-creation behavior) would then replay the
+        stream's entire history, including messages acknowledged long ago
+        — ``XACK`` removes an entry from the group's PEL, not from the
+        stream. It is therefore recreated from ``"$"`` (only upcoming
+        messages) to avoid this reprocessing storm; the cost is that a
+        message published between the group's disappearance and its
+        recreation can be missed, a trade-off already implicit once the
+        group's state was lost.
         """
         if "NOGROUP" not in str(exc):
             raise exc
         logger.error("Consumer group manquant sur %s, recréation (%s)", stream, exc)
-        self._ensure_group(stream)
+        self._ensure_group(stream, start_id="$")
 
     def _to_envelope(
         self, stream: str, msg_id: bytes, fields: dict[bytes, bytes]
@@ -355,7 +393,12 @@ class RedisStreamsBroker(BaseBroker):
             dlq_data: dict[str, Any] = {_FIELD: self.serializer.dumps(envelope)}
             # Voir le commentaire équivalent dans publish() ci-dessus.
             # See the equivalent comment in publish() above.
-            pipe.xadd(self._dlq_name(envelope.event_type), dlq_data)  # type: ignore[arg-type]
+            pipe.xadd(
+                self._dlq_name(envelope.event_type),
+                dlq_data,  # type: ignore[arg-type]
+                maxlen=self.maxlen,
+                approximate=True,
+            )
             pipe.xack(stream, self.service_name, msg_id)
             pipe.execute()
         return True

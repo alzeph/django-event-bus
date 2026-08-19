@@ -168,7 +168,7 @@ class ResourceSerializer:
                 data[field_name] = getter(instance)
                 continue
             try:
-                data[field_name] = getattr(instance, field_name)
+                value = getattr(instance, field_name)
             except AttributeError as exc:
                 raise ImproperlyConfiguredError(
                     f"{type(self).__name__}: le champ '{field_name}' n'existe pas sur "
@@ -177,6 +177,25 @@ class ResourceSerializer:
                     f"exist on {instance.__class__.__name__} and no get_{field_name} "
                     "method is defined."
                 ) from exc
+            # Une relation (ForeignKey, ...) n'est pas sérialisable en JSON
+            # telle quelle: sans ce garde-fou, l'erreur ne surviendrait
+            # qu'au moment de l'encodage JSON, avec un TypeError peu
+            # explicite côté HTTP/gRPC.
+            #
+            # A relation (ForeignKey, ...) is not directly JSON-serializable:
+            # without this guard, the failure would only surface at JSON
+            # encoding time, as an unhelpful TypeError on the HTTP/gRPC side.
+            if isinstance(value, Model):
+                raise ImproperlyConfiguredError(
+                    f"{type(self).__name__}: le champ '{field_name}' est une relation "
+                    f"({value.__class__.__name__}) non sérialisable directement ; "
+                    f"définissez get_{field_name}(self, instance) pour choisir quoi "
+                    f"exposer / field '{field_name}' is a relation "
+                    f"({value.__class__.__name__}) not directly serializable; define "
+                    f"a get_{field_name}(self, instance) method to choose what to "
+                    "expose."
+                )
+            data[field_name] = value
         return data
 
     @property
