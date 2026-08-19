@@ -42,9 +42,9 @@ class Command(BaseCommand):
         parser.add_argument("--port", type=int, default=50051)
 
     def handle(self, *args: Any, **options: Any) -> None:
-        """Résout ``GRPC_RESOLVER`` puis démarre le serveur bloquant.
+        """Résout ``GRPC_RESOLVER`` + les options d'auth/TLS puis démarre le serveur.
 
-        Resolves ``GRPC_RESOLVER`` then starts the blocking server.
+        Resolves ``GRPC_RESOLVER`` + the auth/TLS options then starts the server.
         """
         resolver_path = remote_settings.GRPC_RESOLVER
         if not resolver_path:
@@ -55,5 +55,17 @@ class Command(BaseCommand):
             )
         resolve = import_string(resolver_path)
         port = options["port"]
+
+        credentials = None
+        credentials_path = remote_settings.GRPC_SERVER_CREDENTIALS
+        if credentials_path:
+            build_credentials = import_string(credentials_path)
+            credentials = build_credentials()
+
         self.stdout.write(self.style.SUCCESS(f"Démarrage sur le port {port}"))
-        serve(resolve, port=port)
+        serve(
+            resolve,
+            port=port,
+            auth_token=remote_settings.AUTH_TOKEN,
+            credentials=credentials,
+        )

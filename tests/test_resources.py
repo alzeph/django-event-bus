@@ -1,7 +1,7 @@
 import json
 
 import pytest
-from django.test import RequestFactory
+from django.test import RequestFactory, override_settings
 
 from django_event_bus.exceptions import ImproperlyConfiguredError
 from django_event_bus.remote import ResourceSerializer, expose_resource
@@ -10,7 +10,7 @@ from django_event_bus.remote.resources import (
     registry_resolver,
 )
 from django_event_bus.remote.views import resource_detail
-from tests.testapp.models import Widget
+from tests.testapp.models import Widget, WidgetOwner
 
 
 @pytest.fixture(autouse=True)
@@ -161,6 +161,58 @@ def test_get_field_method_computes_a_derived_value():
     }
 
 
+def test_expose_resource_rejects_relation_field_without_getter_at_registration_time():
+    """Détecté au chargement, pas à la première requête HTTP/gRPC (cf.
+    ``resources._check_no_unserializable_relation_fields``)."""
+    resource_name = _unique_resource_name("relation_field")
+
+    class OwnerSerializer(ResourceSerializer):
+        class Meta:
+            model = WidgetOwner
+            resource = resource_name
+            fields = ["id", "widget"]
+
+    with pytest.raises(ImproperlyConfiguredError, match="get_widget"):
+        expose_resource(OwnerSerializer)
+
+    # L'échec de validation ne doit pas laisser la ressource enregistrée.
+    assert get_registered_serializer(resource_name) is None
+
+
+def test_expose_resource_allows_relation_field_with_getter():
+    resource_name = _unique_resource_name("relation_field_with_getter")
+
+    @expose_resource
+    class OwnerSerializer(ResourceSerializer):
+        class Meta:
+            model = WidgetOwner
+            resource = resource_name
+            fields = ["id", "widget"]
+
+        def get_widget(self, instance):
+            return instance.widget_id
+
+    assert get_registered_serializer(resource_name) is OwnerSerializer
+
+
+def test_expose_resource_skips_relation_validation_when_fields_and_exclude_conflict():
+    """La validation fields/exclude reste signalée à l'usage (get_fields()),
+    pas à la décoration — comportement inchangé, voir le test ci-dessus
+    dans la classe existante."""
+    resource_name = _unique_resource_name("relation_field_conflict")
+
+    @expose_resource
+    class OwnerSerializer(ResourceSerializer):
+        class Meta:
+            model = WidgetOwner
+            resource = resource_name
+            fields = ["widget"]
+            exclude = ["id"]
+
+    with pytest.raises(ImproperlyConfiguredError):
+        OwnerSerializer.get_fields()
+
+
 @pytest.mark.django_db
 def test_missing_field_without_get_method_raises_a_clear_error():
     resource_name = _unique_resource_name("missing_field")
@@ -269,3 +321,73 @@ def test_resource_detail_view_end_to_end():
 
     unknown_resource = resource_detail(factory.get("/"), "nobody.exposes.this", "1")
     assert unknown_resource.status_code == 404
+
+
+def test_resource_detail_rejects_non_get_methods():
+    resource_name = _unique_resource_name("method_not_allowed")
+
+    @expose_resource
+    class WidgetSerializer(ResourceSerializer):
+        class Meta:
+            model = Widget
+            resource = resource_name
+            fields = ["id"]
+
+    factory = RequestFactory()
+
+    response = resource_detail(factory.post("/"), resource_name, "1")
+
+    assert response.status_code == 405
+
+
+@pytest.mark.django_db
+def test_resource_detail_without_auth_token_configured_is_unrestricted():
+    """Comportement par défaut inchangé: AUTH_TOKEN non défini -> pas de contrôle."""
+    resource_name = _unique_resource_name("no_auth_configured")
+
+    @expose_resource
+    class WidgetSerializer(ResourceSerializer):
+        class Meta:
+            model = Widget
+            resource = resource_name
+            fields = ["id"]
+
+    widget = Widget.objects.create(name="Gadget", price_cents=1500)
+    factory = RequestFactory()
+
+    response = resource_detail(factory.get("/"), resource_name, str(widget.id))
+
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_resource_detail_requires_matching_bearer_token_when_configured():
+    resource_name = _unique_resource_name("auth_required")
+
+    @expose_resource
+    class WidgetSerializer(ResourceSerializer):
+        class Meta:
+            model = Widget
+            resource = resource_name
+            fields = ["id"]
+
+    widget = Widget.objects.create(name="Gadget", price_cents=1500)
+    factory = RequestFactory()
+
+    with override_settings(REMOTE_DATA={"AUTH_TOKEN": "s3cr3t"}):
+        missing = resource_detail(factory.get("/"), resource_name, str(widget.id))
+        assert missing.status_code == 401
+
+        wrong = resource_detail(
+            factory.get("/", HTTP_AUTHORIZATION="Bearer nope"),
+            resource_name,
+            str(widget.id),
+        )
+        assert wrong.status_code == 401
+
+        correct = resource_detail(
+            factory.get("/", HTTP_AUTHORIZATION="Bearer s3cr3t"),
+            resource_name,
+            str(widget.id),
+        )
+        assert correct.status_code == 200

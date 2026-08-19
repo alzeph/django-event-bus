@@ -22,13 +22,43 @@ une attention particulière :
 
 - **`RemoteForeignKey` et `@expose_resource`** supposent que les
   transports configurés (HTTP, gRPC) joignent des services *de
-  confiance* sur un réseau privé/interne. Ni la vue HTTP générique
-  (`django_event_bus.remote.views.resource_detail`) ni le serveur gRPC
-  générique (`django_event_bus.remote.grpc_server`) ne font
-  d'authentification ou d'autorisation par défaut — ils répondent à
-  n'importe quel appelant capable de les joindre. Placez-les derrière
-  votre propre frontière réseau (VPC, service mesh, reverse proxy avec
-  authentification) plutôt que de les exposer publiquement.
+  confiance* sur un réseau privé/interne. Par défaut, ni la vue HTTP
+  générique (`django_event_bus.remote.views.resource_detail`) ni le
+  serveur gRPC générique (`django_event_bus.remote.grpc_server`) ne font
+  d'authentification ou d'autorisation — ils répondent à n'importe quel
+  appelant capable de les joindre. Placez-les derrière votre propre
+  frontière réseau (VPC, service mesh, reverse proxy avec authentification)
+  plutôt que de les exposer publiquement.
+  - **Authentification par secret partagé (optionnelle)** : définissez
+    `REMOTE_DATA["AUTH_TOKEN"]` côté service fournisseur pour exiger que
+    tout appel HTTP/gRPC présente `Authorization: Bearer <AUTH_TOKEN>`
+    (comparaison à temps constant ; 401 côté HTTP, statut
+    `UNAUTHENTICATED` côté gRPC sinon). Côté consommateur, définissez
+    `auth_token` dans l'entrée `SERVICE_REGISTRY[service]["http"|"grpc"]`
+    correspondante : les deux transports l'attachent alors
+    automatiquement. C'est un secret partagé, pas une identité par
+    appelant ni une autorisation fine — à voir comme une couche
+    supplémentaire par-dessus l'isolation réseau, pas un remplacement.
+  - **TLS pour gRPC** : `remote.grpc_server.serve()` accepte un argument
+    `credentials` (`grpc.ServerCredentials`, ex: via
+    `grpc.ssl_server_credentials(...)`) pour servir en TLS plutôt qu'avec
+    `add_insecure_port` ; câblez-le depuis
+    `manage.py remote_grpc_server` via
+    `REMOTE_DATA["GRPC_SERVER_CREDENTIALS"]` (chemin pointé vers un
+    callable sans argument qui les construit, ex: depuis des fichiers
+    cert/clé ou un gestionnaire de secrets — laissé hors de la librairie
+    pour ne pas la lier à un mode de stockage des certificats
+    particulier). Côté consommateur, définissez `credentials` (un
+    `grpc.ChannelCredentials`) dans `SERVICE_REGISTRY[service]["grpc"]`.
+    Le transport HTTP passe déjà par TLS dès que `base_url` est en
+    `https://`, comportement standard de `requests`.
+  - **Rate limiting** : non intégré, pour ne pas imposer une dépendance
+    particulière. Côté HTTP, enveloppez `resource_detail` vous-même dans
+    votre propre `urls.py` (ex: avec `django-ratelimit`) plutôt que
+    d'inclure `django_event_bus.remote.urls` tel quel. Côté gRPC,
+    `serve()` accepte une séquence `interceptors` — passez-y votre propre
+    `grpc.ServerInterceptor` de rate limiting ; il s'exécute après le
+    contrôle `auth_token`, s'il est configuré.
 - **`ResourceSerializer`** n'expose que les champs explicitement listés
   (`fields`) ou non exclus (`exclude`) ; une ressource déclarée avec
   `fields = "__all__"` sur un modèle contenant des colonnes sensibles
