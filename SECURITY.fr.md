@@ -14,6 +14,25 @@ sécurité. Contactez plutôt directement le mainteneur à
 
 Une réponse est visée sous 5 jours ouvrés.
 
+## Délai de traitement visé
+
+Une fois un signalement confirmé comme une vraie vulnérabilité, les
+objectifs de réponse et de correction dépendent de la sévérité
+(alignement approximatif sur CVSS) :
+
+| Sévérité | Exemple | Réponse initiale | Correctif ou mitigation publiés |
+|---|---|---|---|
+| Critique | Exécution de code distante non authentifiée, exfiltration massive de données inter-services | 24h | 72h |
+| Élevée | Contournement d'authentification sur `resource_detail`/gRPC, fuite de données inter-tenant (voir plus bas) | 2 jours ouvrés | 7 jours |
+| Moyenne | Confusion de privilège sous une configuration spécifique, DoS nécessitant un accès privilégié | 5 jours ouvrés | 30 jours |
+| Faible | Suggestion de durcissement, manque de défense en profondeur sans chemin d'exploitation direct | Best effort | Prochaine version mineure |
+
+Ce sont des objectifs, pas des engagements contractuels — projet
+open-source à mainteneur unique. Un correctif peut sortir en version
+patch, ou sous forme de mitigation documentée quand un correctif de
+code n'est pas la bonne réponse (ex : "placez ceci derrière votre VPN",
+déjà le cas pour plusieurs points ci-dessous).
+
 ## Points d'attention spécifiques à un bus d'événements inter-services
 
 `django-event-bus` fait transiter des données et déclenche du code à
@@ -29,18 +48,30 @@ une attention particulière :
   appelant capable de les joindre. Placez-les derrière votre propre
   frontière réseau (VPC, service mesh, reverse proxy avec authentification)
   plutôt que de les exposer publiquement.
-  - **Authentification par secret partagé (optionnelle)** : définissez
-    `REMOTE_DATA["AUTH_TOKEN"]` côté service fournisseur pour exiger que
-    tout appel HTTP/gRPC présente `Authorization: Bearer <AUTH_TOKEN>`
-    (comparaison à temps constant ; 401 côté HTTP, statut
-    `UNAUTHENTICATED` côté gRPC sinon). Côté consommateur, définissez
-    `auth_token` dans l'entrée `SERVICE_REGISTRY[service]["http"|"grpc"]`
-    correspondante : les deux transports l'attachent alors
-    automatiquement. C'est un secret partagé, pas une identité par
-    appelant ni une autorisation fine — à voir comme une couche
-    supplémentaire par-dessus l'isolation réseau, pas un remplacement.
-  - **TLS pour gRPC** : `remote.grpc_server.serve()` accepte un argument
-    `credentials` (`grpc.ServerCredentials`, ex: via
+  - **Authentification, pluggable** : `django_event_bus.remote.auth`
+    définit `BaseAuthBackend` ; le service fournisseur en choisit un via
+    `REMOTE_DATA["AUTH_BACKEND"]` (chemin pointé vers une instance) ou le
+    raccourci `REMOTE_DATA["AUTH_TOKEN"]`. Deux backends fournis :
+    - `StaticTokenAuthBackend` (ce que construit `AUTH_TOKEN`) : un seul
+      secret partagé pour tous les appelants, `Authorization: Bearer
+      <token>`, comparaison à temps constant. Pas d'identité par
+      appelant, pas d'expiration — le secret doit être tourné
+      manuellement, et une fuite donne accès à tout ce que le service
+      expose.
+    - `JWTAuthBackend` (nécessite `pip install django-event-bus[jwt]`) :
+      vérifie un JWT signé et à courte durée de vie par appelant (`exp`
+      obligatoire), exposant le `sub` (ou `iss`) du token comme identité
+      d'appelant pour le journal d'audit. À préférer à un token statique
+      quand les appelants doivent être distinguables et les secrets
+      expirer d'eux-mêmes.
+    Côté consommateur, HTTP lit `auth_token` dans
+    `SERVICE_REGISTRY[service]["http"]` et gRPC dans
+    `SERVICE_REGISTRY[service]["grpc"]` ; les deux attachent
+    automatiquement l'en-tête/la métadonnée. Chaque backend reste une
+    couche supplémentaire par-dessus l'isolation réseau, pas un
+    remplacement.
+  - **TLS, et une option pour l'imposer** : `remote.grpc_server.serve()`
+    accepte un argument `credentials` (`grpc.ServerCredentials`, ex: via
     `grpc.ssl_server_credentials(...)`) pour servir en TLS plutôt qu'avec
     `add_insecure_port` ; câblez-le depuis
     `manage.py remote_grpc_server` via
@@ -51,14 +82,34 @@ une attention particulière :
     particulier). Côté consommateur, définissez `credentials` (un
     `grpc.ChannelCredentials`) dans `SERVICE_REGISTRY[service]["grpc"]`.
     Le transport HTTP passe déjà par TLS dès que `base_url` est en
-    `https://`, comportement standard de `requests`.
-  - **Rate limiting** : non intégré, pour ne pas imposer une dépendance
-    particulière. Côté HTTP, enveloppez `resource_detail` vous-même dans
-    votre propre `urls.py` (ex: avec `django-ratelimit`) plutôt que
-    d'inclure `django_event_bus.remote.urls` tel quel. Côté gRPC,
-    `serve()` accepte une séquence `interceptors` — passez-y votre propre
-    `grpc.ServerInterceptor` de rate limiting ; il s'exécute après le
-    contrôle `auth_token`, s'il est configuré.
+    `https://`, comportement standard de `requests`. Définissez
+    `REMOTE_DATA["REQUIRE_TLS"] = True` pour échouer plutôt que de
+    retomber silencieusement en clair : le transport HTTP refuse alors
+    un `base_url` non-`https://`, le transport gRPC refuse un service
+    sans `credentials`, et `manage.py remote_grpc_server` refuse de
+    démarrer sans `GRPC_SERVER_CREDENTIALS`.
+  - **Rate limiting, actif par défaut** : `REMOTE_DATA["RATE_LIMIT"]`
+    (défaut `{"LIMIT": 300, "WINDOW_SECONDS": 60}`, `None` désactive)
+    limite `resource_detail` par `REMOTE_ADDR` de l'appelant et le
+    serveur gRPC générique par adresse de pair, via le même cache Django
+    que les données distantes en cache — une fenêtre fixe grossière,
+    suffisante contre l'abus et les tentatives répétées de devinette de
+    secret, pas une garantie de débit précise. Pour plus de finesse, la
+    séquence `interceptors` de `serve()` accepte toujours votre propre
+    `grpc.ServerInterceptor`, appliqué après le rate limiter et le
+    contrôle d'authentification intégrés.
+  - **Limites de taille de réponse** : `REMOTE_DATA["MAX_RESPONSE_BYTES"]`
+    (défaut 2 Mo) borne la quantité lue d'une réponse HTTP/gRPC distante
+    par les transports consommateurs avant d'abandonner
+    (`RemoteServiceUnavailableError`) — protège un consommateur contre un
+    pair "de confiance" compromis ou mal configuré renvoyant un corps
+    démesuré. Surchargeable par service via
+    `SERVICE_REGISTRY[service]["http"|"grpc"]["max_response_bytes"]`.
+  - **Journal d'audit** : chaque décision d'accès (accordée ou refusée)
+    sur `resource_detail` et le serveur gRPC générique est journalisée
+    via le logger `django_event_bus.remote.audit` (champs structurés
+    `extra` : transport, ressource, pk, appelant, pair, accordé, raison)
+    — routable ou filtrable indépendamment des logs applicatifs.
 - **`ResourceSerializer`** n'expose que les champs explicitement listés
   (`fields`) ou non exclus (`exclude`) ; une ressource déclarée avec
   `fields = "__all__"` sur un modèle contenant des colonnes sensibles
@@ -81,3 +132,7 @@ une attention particulière :
   mauvais tenant, via un receiver, un `RemoteForeignKey` résolu ou une
   ressource exposée, est une vulnérabilité de sévérité élevée et doit
   être signalé comme telle, pas comme un bug fonctionnel classique.
+
+Voir [THREAT_MODEL.fr.md](THREAT_MODEL.fr.md) pour le tableau complet :
+frontières de confiance, actifs et attaquants considérés, et quels
+risques sont acceptés par conception plutôt que traités dans le code.

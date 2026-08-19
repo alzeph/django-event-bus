@@ -14,7 +14,13 @@ import threading
 import grpc
 import pytest
 
-from django_event_bus.remote.grpc_server import _TokenAuthInterceptor, serve
+from django_event_bus.remote.auth import StaticTokenAuthBackend
+from django_event_bus.remote.grpc_server import (
+    _AuthInterceptor,
+    _RateLimitInterceptor,
+    serve,
+)
+from django_event_bus.remote.ratelimit import RateLimitConfig
 
 
 class _FakeServer:
@@ -60,13 +66,16 @@ def _neutralize_blocking_calls(monkeypatch):
 def fake_server(monkeypatch) -> _FakeServer:
     server = _FakeServer()
     captured_interceptors: list = []
+    captured_options: list = []
 
-    def fake_grpc_server(executor, interceptors=None):
+    def fake_grpc_server(executor, interceptors=None, options=None):
         captured_interceptors.extend(interceptors or [])
+        captured_options.append(options)
         return server
 
     monkeypatch.setattr(grpc, "server", fake_grpc_server)
     server.captured_interceptors = captured_interceptors  # type: ignore[attr-defined]
+    server.captured_options = captured_options  # type: ignore[attr-defined]
     return server
 
 
@@ -103,5 +112,40 @@ def test_serve_adds_token_auth_interceptor_first(fake_server):
 
     interceptors = fake_server.captured_interceptors  # type: ignore[attr-defined]
     assert len(interceptors) == 2
-    assert isinstance(interceptors[0], _TokenAuthInterceptor)
+    assert isinstance(interceptors[0], _AuthInterceptor)
     assert interceptors[1] is extra_interceptor
+
+
+def test_serve_auth_backend_takes_precedence_over_auth_token(fake_server):
+    backend = StaticTokenAuthBackend("from-backend")
+
+    serve(_resolve, auth_token="ignored", auth_backend=backend)
+
+    interceptors = fake_server.captured_interceptors  # type: ignore[attr-defined]
+    assert len(interceptors) == 1
+    assert interceptors[0]._backend is backend
+
+
+def test_serve_adds_rate_limit_interceptor_before_auth(fake_server):
+    rate_limit = RateLimitConfig(limit=10, window_seconds=60)
+
+    serve(_resolve, rate_limit=rate_limit, auth_token="s3cr3t")
+
+    interceptors = fake_server.captured_interceptors  # type: ignore[attr-defined]
+    assert len(interceptors) == 2
+    assert isinstance(interceptors[0], _RateLimitInterceptor)
+    assert isinstance(interceptors[1], _AuthInterceptor)
+
+
+def test_serve_passes_max_message_bytes_as_server_options(fake_server):
+    serve(_resolve, max_message_bytes=123)
+
+    options = fake_server.captured_options[0]  # type: ignore[attr-defined]
+    assert ("grpc.max_receive_message_length", 123) in options
+    assert ("grpc.max_send_message_length", 123) in options
+
+
+def test_serve_omits_options_by_default(fake_server):
+    serve(_resolve)
+
+    assert fake_server.captured_options == [None]  # type: ignore[attr-defined]

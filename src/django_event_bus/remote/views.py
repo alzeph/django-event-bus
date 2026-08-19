@@ -5,61 +5,78 @@ Generic HTTP view serving the resources declared via ``@expose_resource``.
 
 from __future__ import annotations
 
-import hmac
-
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET
 
 from ..settings import remote_settings
+from . import audit
+from .auth import resolve_auth_backend
+from .ratelimit import is_allowed, resolve_rate_limit_config
 from .resources import get_registered_serializer
-
-
-def _is_authorized(request: HttpRequest) -> bool:
-    """Vérifie ``Authorization: Bearer <REMOTE_DATA["AUTH_TOKEN"]>`` si configuré.
-
-    Toujours ``True`` si ``AUTH_TOKEN`` n'est pas défini (comportement par
-    défaut, inchangé — voir ``SECURITY.md``). Comparaison à temps constant
-    (``hmac.compare_digest``) pour ne pas exposer le secret à une attaque
-    par mesure de temps.
-
-    Checks ``Authorization: Bearer <REMOTE_DATA["AUTH_TOKEN"]>`` if configured.
-
-    Always ``True`` if ``AUTH_TOKEN`` is not set (default, unchanged
-    behavior — see ``SECURITY.md``). Constant-time comparison
-    (``hmac.compare_digest``) so as not to expose the secret to a timing
-    attack.
-    """
-    token = remote_settings.AUTH_TOKEN
-    if not token:
-        return True
-    presented = request.headers.get("Authorization", "")
-    expected = f"Bearer {token}"
-    return hmac.compare_digest(presented, expected)
 
 
 @require_GET
 def resource_detail(request: HttpRequest, resource: str, pk: str) -> JsonResponse:
     """Répond à ``GET {base_url}/{resource}/{pk}/``, la convention de ``HTTPTransport``.
 
-    404 si ``resource`` n'a pas été exposée via ``@expose_resource``, ou
-    si ``pk`` ne correspond à aucune instance (y compris un ``pk`` d'un
+    Dans l'ordre: 429 si ``REMOTE_DATA["RATE_LIMIT"]`` est dépassé pour
+    l'adresse appelante ; 401 si l'authentification configurée
+    (``AUTH_BACKEND``/``AUTH_TOKEN``) refuse la requête ; 404 si
+    ``resource`` n'a pas été exposée via ``@expose_resource``, ou si
+    ``pk`` ne correspond à aucune instance (y compris un ``pk`` d'un
     type incompatible, ex: non numérique pour une clé entière — traité
-    comme "non trouvé", pas comme une erreur serveur). 401 si
-    ``REMOTE_DATA["AUTH_TOKEN"]`` est configuré et que la requête ne
-    présente pas le ``Authorization: Bearer <token>`` attendu.
+    comme "non trouvé", pas comme une erreur serveur). Chaque décision
+    d'accès (accordée ou refusée) est journalisée via
+    ``remote.audit.log_access``.
 
     Answers ``GET {base_url}/{resource}/{pk}/``, ``HTTPTransport``'s convention.
 
-    404 if ``resource`` was not exposed via ``@expose_resource``, or if
-    ``pk`` matches no instance (including a ``pk`` of an incompatible
-    type, e.g. non-numeric for an integer key — treated as "not found",
-    not as a server error). 401 if ``REMOTE_DATA["AUTH_TOKEN"]`` is
-    configured and the request does not present the expected
-    ``Authorization: Bearer <token>``.
+    In order: 429 if ``REMOTE_DATA["RATE_LIMIT"]`` is exceeded for the
+    calling address; 401 if the configured authentication
+    (``AUTH_BACKEND``/``AUTH_TOKEN``) rejects the request; 404 if
+    ``resource`` was not exposed via ``@expose_resource``, or if ``pk``
+    matches no instance (including a ``pk`` of an incompatible type,
+    e.g. non-numeric for an integer key — treated as "not found", not as
+    a server error). Every access decision (granted or denied) is
+    logged via ``remote.audit.log_access``.
     """
-    if not _is_authorized(request):
+    peer = request.META.get("REMOTE_ADDR")
+
+    rate_limit_config = resolve_rate_limit_config(remote_settings.RATE_LIMIT)
+    if rate_limit_config is not None and not is_allowed(rate_limit_config, peer or "-"):
+        audit.log_access(
+            transport="http",
+            granted=False,
+            peer=peer,
+            resource=resource,
+            pk=pk,
+            reason="rate limited",
+        )
+        return JsonResponse({"detail": "rate limited"}, status=429)
+
+    auth_result = resolve_auth_backend().authenticate(
+        request.headers.get("Authorization")
+    )
+    if not auth_result.granted:
+        audit.log_access(
+            transport="http",
+            granted=False,
+            peer=peer,
+            resource=resource,
+            pk=pk,
+            reason=auth_result.reason,
+        )
         return JsonResponse({"detail": "unauthorized"}, status=401)
+
+    audit.log_access(
+        transport="http",
+        granted=True,
+        peer=peer,
+        resource=resource,
+        pk=pk,
+        caller=auth_result.caller,
+    )
 
     serializer_class = get_registered_serializer(resource)
     if serializer_class is None:

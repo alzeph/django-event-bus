@@ -2,7 +2,10 @@ import pytest
 import requests
 from django.test import override_settings
 
-from django_event_bus.exceptions import RemoteServiceUnavailableError
+from django_event_bus.exceptions import (
+    RemoteServiceMisconfiguredError,
+    RemoteServiceUnavailableError,
+)
 from django_event_bus.remote.transports.http import HTTPTransport
 
 
@@ -92,3 +95,52 @@ def test_fetch_raises_on_invalid_json_body(requests_mock):
 
     with pytest.raises(RemoteServiceUnavailableError):
         transport.fetch(service="service_auth", resource="users", pk=1)
+
+
+def test_fetch_raises_when_response_exceeds_max_response_bytes(requests_mock):
+    requests_mock.get(
+        "http://testserver/api/users/1/", json={"id": 1, "padding": "x" * 1000}
+    )
+    registry = {
+        "service_auth": {"http": {"base_url": "http://testserver/api", "timeout": 3}}
+    }
+
+    with override_settings(
+        REMOTE_DATA={"MAX_RESPONSE_BYTES": 10, "SERVICE_REGISTRY": registry}
+    ):
+        transport = HTTPTransport()
+        with pytest.raises(RemoteServiceUnavailableError, match="taille"):
+            transport.fetch(service="service_auth", resource="users", pk=1)
+
+
+def test_fetch_respects_per_service_max_response_bytes_override(requests_mock):
+    requests_mock.get(
+        "http://testserver/api/users/1/", json={"id": 1, "padding": "x" * 1000}
+    )
+    registry = {
+        "service_auth": {
+            "http": {
+                "base_url": "http://testserver/api",
+                "timeout": 3,
+                "max_response_bytes": 10,
+            }
+        }
+    }
+
+    with override_settings(REMOTE_DATA={"SERVICE_REGISTRY": registry}):
+        transport = HTTPTransport()
+        with pytest.raises(RemoteServiceUnavailableError):
+            transport.fetch(service="service_auth", resource="users", pk=1)
+
+
+def test_fetch_raises_when_require_tls_and_base_url_is_not_https(requests_mock):
+    registry = {
+        "service_auth": {"http": {"base_url": "http://testserver/api", "timeout": 3}}
+    }
+
+    with override_settings(
+        REMOTE_DATA={"REQUIRE_TLS": True, "SERVICE_REGISTRY": registry}
+    ):
+        transport = HTTPTransport()
+        with pytest.raises(RemoteServiceMisconfiguredError, match="REQUIRE_TLS"):
+            transport.fetch(service="service_auth", resource="users", pk=1)

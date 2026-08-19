@@ -347,33 +347,54 @@ REMOTE_DATA = {
 ### Securing the exposed endpoints
 
 By default, neither `resource_detail` nor the gRPC server perform
-authentication — see [SECURITY.md](SECURITY.md) for the full picture
-(they assume a trusted private network). Three opt-in layers, usable
-independently:
+authentication — see [SECURITY.md](SECURITY.md) and
+[THREAT_MODEL.md](THREAT_MODEL.md) for the full picture (they assume a
+trusted private network). Rate limiting is on by default; auth and TLS
+are opt-in layers, usable independently:
 
 ```python
 # Provider side (service_auth)
 REMOTE_DATA = {
     "AUTH_TOKEN": "a-shared-secret",              # HTTP: 401 / gRPC: UNAUTHENTICATED without it
     "GRPC_SERVER_CREDENTIALS": "accounts.tls.build_server_credentials",  # -> grpc.ServerCredentials
+    "REQUIRE_TLS": True,                          # fail closed instead of falling back to plaintext
+    # "RATE_LIMIT": {"LIMIT": 300, "WINDOW_SECONDS": 60},  # the default; None disables it
+    # "MAX_RESPONSE_BYTES": 2_000_000,                     # the default
 }
 
 # Consumer side (service_order)
 REMOTE_DATA = {
     "SERVICE_REGISTRY": {
         "service_auth": {
-            "http": {"base_url": "...", "auth_token": "a-shared-secret"},
+            "http": {"base_url": "https://...", "auth_token": "a-shared-secret"},
             "grpc": {"target": "...", "auth_token": "a-shared-secret", "credentials": channel_creds},
         },
     },
 }
 ```
 
-For rate limiting, wrap `resource_detail` yourself in your own `urls.py`
-(e.g. with `django-ratelimit`) instead of including
-`django_event_bus.remote.urls` as-is, and/or pass your own
+`AUTH_TOKEN` is a shorthand for `StaticTokenAuthBackend` — one shared
+secret for every caller. For a per-caller identity with a short,
+self-expiring lifetime, use `remote.auth.JWTAuthBackend` instead (needs
+`pip install django-event-bus[jwt]`) via `REMOTE_DATA["AUTH_BACKEND"]`
+(dotted path to an instance):
+
+```python
+# accounts/auth_backend.py
+from django_event_bus.remote.auth import JWTAuthBackend
+
+backend = JWTAuthBackend(settings.JWT_SIGNING_KEY, audience="service_auth")
+
+# settings.py
+REMOTE_DATA = {"AUTH_BACKEND": "accounts.auth_backend.backend"}
+```
+
+For rate limiting beyond the built-in default, wrap `resource_detail`
+yourself in your own `urls.py` (e.g. with `django-ratelimit`) instead of
+including `django_event_bus.remote.urls` as-is, and/or pass your own
 `grpc.ServerInterceptor` via `manage.py remote_grpc_server`'s
-`serve(..., interceptors=[...])`.
+`serve(..., interceptors=[...])` — it runs after the built-in rate
+limiter and auth check.
 
 ### Event-driven invalidation
 

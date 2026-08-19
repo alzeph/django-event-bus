@@ -40,6 +40,16 @@ dependencies = [
     "protobuf>=4.25",
 ]
 
+[project.optional-dependencies]
+# Nécessaire uniquement pour django_event_bus.remote.auth.JWTAuthBackend
+# — les autres backends (StaticTokenAuthBackend, AllowAllAuthBackend)
+# n'en ont pas besoin, d'où un extra plutôt qu'une dépendance obligatoire.
+#
+# Only needed for django_event_bus.remote.auth.JWTAuthBackend — the
+# other backends (StaticTokenAuthBackend, AllowAllAuthBackend) don't
+# need it, hence an extra rather than a hard dependency.
+jwt = ["pyjwt>=2.8"]
+
 [project.urls]
 Repository = "https://github.com/alzeph/django-event-bus"
 Changelog = "https://github.com/alzeph/django-event-bus/blob/main/CHANGELOG.md"
@@ -54,6 +64,7 @@ dev = [
     "django-stubs>=5.0",
     "requests-mock>=1.12",
     "grpcio-tools>=1.60",
+    "pyjwt>=2.8",
 ]
 
 [build-system]

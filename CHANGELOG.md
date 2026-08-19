@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Pluggable authentication**: `django_event_bus.remote.auth` with
+  `BaseAuthBackend`, `StaticTokenAuthBackend` (what `AUTH_TOKEN`
+  builds), and `JWTAuthBackend` (per-caller identity, short-lived
+  signed tokens — needs `pip install django-event-bus[jwt]`), selected
+  via `REMOTE_DATA["AUTH_BACKEND"]`.
+- **Rate limiting, on by default**: `REMOTE_DATA["RATE_LIMIT"]`
+  (default `{"LIMIT": 300, "WINDOW_SECONDS": 60}`) throttles
+  `resource_detail` and the generic gRPC server by caller
+  address/peer, cache-backed; `None` disables it.
+- **Response size limits**: `REMOTE_DATA["MAX_RESPONSE_BYTES"]`
+  (default 2 MB) bounds how much of a remote response the HTTP/gRPC
+  consumer transports will read, overridable per service.
+- **`REMOTE_DATA["REQUIRE_TLS"]`**: fails closed instead of silently
+  falling back to plaintext HTTP/gRPC when set.
+- **Structured audit trail**: every access decision on
+  `resource_detail`/the gRPC server is logged via the
+  `django_event_bus.remote.audit` logger.
+- `THREAT_MODEL.md`: trust boundaries, assets, STRIDE-by-component, and
+  risks accepted by design. `SECURITY.md` gained a triage SLA table.
+- CI/CD governance: GitHub-native Dependabot security updates and
+  vulnerability alerts enabled; a non-root user in the demo `Dockerfile`.
+
 ## [1.0.0rc2] - 2026-08-19
 
 ### Added

@@ -11,7 +11,8 @@ from typing import Any
 
 import grpc
 
-from ...exceptions import RemoteServiceUnavailableError
+from ...exceptions import RemoteServiceMisconfiguredError, RemoteServiceUnavailableError
+from ...settings import remote_settings
 from ..proto import remote_resource_pb2, remote_resource_pb2_grpc
 from .base import BaseTransport
 from .utils import registry_entry
@@ -24,7 +25,7 @@ class GRPCTransport(BaseTransport):
     ``RemoteResourceService`` défini dans ``remote/proto/remote_resource.proto``
     (voir ``remote.grpc_server.RemoteResourceServicer`` pour l'implémenter
     facilement). Un canal gRPC est ouvert et réutilisé par service
-    (``target`` venant de
+    (``target``, ``credentials``, ``max_response_bytes`` optionnels venant de
     ``REMOTE_DATA["SERVICE_REGISTRY"][service]["grpc"]``).
 
     Fetches a remote resource via the generic ``GetResource`` RPC.
@@ -32,9 +33,9 @@ class GRPCTransport(BaseTransport):
     The source service must expose the ``RemoteResourceService`` gRPC
     service defined in ``remote/proto/remote_resource.proto`` (see
     ``remote.grpc_server.RemoteResourceServicer`` to implement it
-    easily). One gRPC channel is opened and reused per service (``target``,
-    optional ``credentials``, coming from
-    ``REMOTE_DATA["SERVICE_REGISTRY"][service]["grpc"]``).
+    easily). One gRPC channel is opened and reused per service
+    (``target``, optional ``credentials``, ``max_response_bytes``, coming
+    from ``REMOTE_DATA["SERVICE_REGISTRY"][service]["grpc"]``).
     """
 
     def __init__(self) -> None:
@@ -51,12 +52,22 @@ class GRPCTransport(BaseTransport):
         ``config["credentials"]`` (``grpc.ChannelCredentials``), si
         fourni, ouvre un canal chiffré (``grpc.secure_channel``) plutôt
         qu'en clair (``grpc.insecure_channel``, comportement par défaut).
+        La taille max des messages reçus est bornée
+        (``config["max_response_bytes"]``, sinon
+        ``REMOTE_DATA["MAX_RESPONSE_BYTES"]``): protège ce consommateur
+        contre un pair "de confiance" compromis ou mal configuré
+        renvoyant un message démesuré.
 
         Returns the service's channel, creating and caching it if needed.
 
-        ``config["credentials"]`` (``grpc.ChannelCredentials``), if given,
-        opens an encrypted channel (``grpc.secure_channel``) instead of a
-        plaintext one (``grpc.insecure_channel``, the default).
+        ``config["credentials"]`` (``grpc.ChannelCredentials``), if
+        given, opens an encrypted channel (``grpc.secure_channel``)
+        instead of a plaintext one (``grpc.insecure_channel``, the
+        default). The max size of received messages is bounded
+        (``config["max_response_bytes"]``, otherwise
+        ``REMOTE_DATA["MAX_RESPONSE_BYTES"]``): protects this consumer
+        against a compromised or misconfigured "trusted" peer returning
+        an oversized message.
         """
         channel = self._channels.get(service)
         if channel is not None:
@@ -66,10 +77,14 @@ class GRPCTransport(BaseTransport):
             if channel is None:
                 target = config["target"]
                 credentials = config.get("credentials")
+                max_bytes = config.get(
+                    "max_response_bytes", remote_settings.MAX_RESPONSE_BYTES
+                )
+                options = [("grpc.max_receive_message_length", max_bytes)]
                 channel = (
-                    grpc.secure_channel(target, credentials)
+                    grpc.secure_channel(target, credentials, options=options)
                     if credentials is not None
-                    else grpc.insecure_channel(target)
+                    else grpc.insecure_channel(target, options=options)
                 )
                 self._channels[service] = channel
         return channel
@@ -80,6 +95,15 @@ class GRPCTransport(BaseTransport):
         Calls ``GetResource`` and converts the response to a dict, ``None`` if absent.
         """
         config = registry_entry(service, "grpc")
+
+        if remote_settings.REQUIRE_TLS and config.get("credentials") is None:
+            raise RemoteServiceMisconfiguredError(
+                f"REMOTE_DATA['REQUIRE_TLS'] est actif mais aucun 'credentials' "
+                f"n'est configuré pour le service '{service}' / "
+                f"REMOTE_DATA['REQUIRE_TLS'] is on but no 'credentials' is "
+                f"configured for service '{service}'."
+            )
+
         channel = self._channel(service, config)
         stub = remote_resource_pb2_grpc.RemoteResourceServiceStub(channel)
         request = remote_resource_pb2.ResourceRequest(resource=resource, pk=str(pk))
@@ -88,10 +112,10 @@ class GRPCTransport(BaseTransport):
         auth_token = config.get("auth_token")
         if auth_token:
             # Symétrique de REMOTE_DATA["AUTH_TOKEN"] côté serveur
-            # (RemoteResourceServicer / _TokenAuthInterceptor).
+            # (RemoteResourceServicer / _AuthInterceptor).
             #
             # Symmetric with the server-side REMOTE_DATA["AUTH_TOKEN"]
-            # (RemoteResourceServicer / _TokenAuthInterceptor).
+            # (RemoteResourceServicer / _AuthInterceptor).
             metadata = (("authorization", f"Bearer {auth_token}"),)
 
         try:

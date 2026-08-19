@@ -9,6 +9,34 @@ et ce projet respecte le [Versionnage Sémantique](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- **Authentification pluggable** : `django_event_bus.remote.auth` avec
+  `BaseAuthBackend`, `StaticTokenAuthBackend` (ce que construit
+  `AUTH_TOKEN`), et `JWTAuthBackend` (identité par appelant, tokens
+  signés à courte durée de vie — nécessite
+  `pip install django-event-bus[jwt]`), sélectionné via
+  `REMOTE_DATA["AUTH_BACKEND"]`.
+- **Rate limiting actif par défaut** : `REMOTE_DATA["RATE_LIMIT"]`
+  (défaut `{"LIMIT": 300, "WINDOW_SECONDS": 60}`) limite
+  `resource_detail` et le serveur gRPC générique par adresse/pair
+  appelant, appuyé sur le cache ; `None` désactive.
+- **Limites de taille de réponse** :
+  `REMOTE_DATA["MAX_RESPONSE_BYTES"]` (défaut 2 Mo) borne la quantité
+  lue d'une réponse distante par les transports consommateurs
+  HTTP/gRPC, surchargeable par service.
+- **`REMOTE_DATA["REQUIRE_TLS"]`** : échoue plutôt que de retomber
+  silencieusement en HTTP/gRPC non chiffré quand actif.
+- **Journal d'audit structuré** : chaque décision d'accès sur
+  `resource_detail`/le serveur gRPC est journalisée via le logger
+  `django_event_bus.remote.audit`.
+- `THREAT_MODEL.md` : frontières de confiance, actifs, STRIDE par
+  composant, et risques acceptés par conception. `SECURITY.md` a gagné
+  un tableau de délai de traitement visé.
+- Gouvernance CI/CD : alertes de vulnérabilité et correctifs de
+  sécurité automatiques Dependabot activés côté GitHub ; utilisateur
+  non-root dans le `Dockerfile` de démo.
+
 ## [1.0.0rc2] - 2026-08-19
 
 ### Ajouté

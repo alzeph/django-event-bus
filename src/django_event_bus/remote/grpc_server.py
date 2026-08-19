@@ -5,7 +5,6 @@ Reusable gRPC server exposing the generic ``GetResource`` RPC.
 
 from __future__ import annotations
 
-import hmac
 import json
 import logging
 import signal
@@ -17,7 +16,10 @@ from typing import Any
 import grpc
 from django.core.serializers.json import DjangoJSONEncoder
 
+from . import audit
+from .auth import AllowAllAuthBackend, BaseAuthBackend, StaticTokenAuthBackend
 from .proto import remote_resource_pb2, remote_resource_pb2_grpc
+from .ratelimit import RateLimitConfig, is_allowed
 
 logger = logging.getLogger("django_event_bus.remote.grpc_server")
 
@@ -46,12 +48,25 @@ class RemoteResourceServicer(remote_resource_pb2_grpc.RemoteResourceServiceServi
     handles the conversion to/from the protocol.
     """
 
-    def __init__(self, resolve: ResourceResolver) -> None:
-        """Reçoit la fonction de résolution fournie par le service source.
+    def __init__(
+        self, resolve: ResourceResolver, *, auth_backend: BaseAuthBackend | None = None
+    ) -> None:
+        """Reçoit la fonction de résolution et le backend d'auth (pour l'audit).
 
-        Receives the resolver function provided by the source service.
+        ``auth_backend`` n'est pas utilisé ici pour décider de
+        l'accès — c'est déjà tranché en amont par ``_AuthInterceptor``,
+        si configuré. Il ne sert qu'à retrouver l'identité de l'appelant
+        (``AuthResult.caller``) pour le journal d'audit.
+
+        Receives the resolver function and the auth backend (for auditing).
+
+        ``auth_backend`` is not used here to decide access — that is
+        already settled upstream by ``_AuthInterceptor``, if configured.
+        It is only used to recover the caller's identity
+        (``AuthResult.caller``) for the audit log.
         """
         self._resolve = resolve
+        self._auth_backend = auth_backend or AllowAllAuthBackend()
 
     def GetResource(  # noqa: N802 - nom imposé par le service gRPC généré / name imposed by generated gRPC service
         self,
@@ -62,6 +77,17 @@ class RemoteResourceServicer(remote_resource_pb2_grpc.RemoteResourceServiceServi
 
         Resolves the requested resource and serializes it into a ``ResourceResponse``.
         """
+        metadata = dict(context.invocation_metadata() or ())
+        caller = self._auth_backend.authenticate(metadata.get("authorization")).caller
+        audit.log_access(
+            transport="grpc",
+            granted=True,
+            peer=context.peer(),
+            resource=request.resource,
+            pk=request.pk,
+            caller=caller,
+        )
+
         data = self._resolve(request.resource, request.pk)
         if data is None:
             return remote_resource_pb2.ResourceResponse(found=False)
@@ -71,59 +97,121 @@ class RemoteResourceServicer(remote_resource_pb2_grpc.RemoteResourceServiceServi
         return remote_resource_pb2.ResourceResponse(found=True, data_json=data_json)
 
 
-def _unauthenticated_handler() -> grpc.RpcMethodHandler:
-    """Handler générique qui rejette l'appel en ``UNAUTHENTICATED``.
+def _wrap_unary_unary(
+    handler: grpc.RpcMethodHandler | None,
+    wrapper: Callable[
+        [Callable[[Any, grpc.ServicerContext], Any], Any, grpc.ServicerContext], Any
+    ],
+) -> grpc.RpcMethodHandler | None:
+    """Enveloppe le comportement unary-unary d'un handler, s'il en a un.
 
-    Generic handler that rejects the call as ``UNAUTHENTICATED``.
+    ``GetResource`` est le seul RPC du service (unary-unary): les autres
+    formes (streaming, etc.) traversent l'intercepteur inchangées.
+
+    Wraps a handler's unary-unary behavior, if it has one.
+
+    ``GetResource`` is the service's only RPC (unary-unary): other
+    shapes (streaming, etc.) pass through the interceptor unchanged.
+    """
+    if handler is None or handler.unary_unary is None:
+        return handler
+    original_behavior = handler.unary_unary
+
+    def behavior(request: Any, context: grpc.ServicerContext) -> Any:
+        return wrapper(original_behavior, request, context)
+
+    return grpc.unary_unary_rpc_method_handler(
+        behavior,
+        request_deserializer=handler.request_deserializer,
+        response_serializer=handler.response_serializer,
+    )
+
+
+class _RateLimitInterceptor(grpc.ServerInterceptor):
+    """Rejette en ``RESOURCE_EXHAUSTED`` un pair dépassant sa limite d'appels.
+
+    Rejects, as ``RESOURCE_EXHAUSTED``, a peer exceeding its call limit.
     """
 
-    def terminate(
-        _request: Any, context: grpc.ServicerContext
-    ) -> remote_resource_pb2.ResourceResponse:
-        context.abort(grpc.StatusCode.UNAUTHENTICATED, "invalid or missing token")
-        # pragma: no cover — context.abort() always raises, never returns.
-        raise AssertionError("unreachable")
+    def __init__(self, config: RateLimitConfig) -> None:
+        """Mémorise la configuration de la limite.
 
-    return grpc.unary_unary_rpc_method_handler(terminate)
-
-
-class _TokenAuthInterceptor(grpc.ServerInterceptor):
-    """Rejette tout appel sans métadonnée ``authorization: Bearer <token>`` valide.
-
-    Symétrique du contrôle fait côté HTTP par
-    ``remote.views._is_authorized``: même secret partagé
-    (``REMOTE_DATA["AUTH_TOKEN"]``), même comparaison à temps constant.
-
-    Rejects any call without a valid ``authorization: Bearer <token>``
-    metadata entry.
-
-    Symmetric with the HTTP-side check in ``remote.views._is_authorized``:
-    same shared secret (``REMOTE_DATA["AUTH_TOKEN"]``), same constant-time
-    comparison.
-    """
-
-    def __init__(self, token: str) -> None:
-        """Mémorise le token attendu et prépare le handler de rejet.
-
-        Stores the expected token and prepares the rejection handler.
+        Stores the limit's configuration.
         """
-        self._token = token
-        self._unauthenticated = _unauthenticated_handler()
+        self._config = config
 
     def intercept_service(
         self,
         continuation: Callable[[grpc.HandlerCallDetails], grpc.RpcMethodHandler],
         handler_call_details: grpc.HandlerCallDetails,
-    ) -> grpc.RpcMethodHandler:
-        """Laisse passer l'appel si le token présenté correspond, le rejette sinon.
+    ) -> grpc.RpcMethodHandler | None:
+        """Enveloppe le handler pour vérifier la limite avant de l'exécuter.
 
-        Passes the call through if the presented token matches, rejects it otherwise.
+        Wraps the handler to check the limit before running it.
         """
+        handler = continuation(handler_call_details)
+
+        def wrapper(
+            original_behavior: Callable[[Any, grpc.ServicerContext], Any],
+            request: Any,
+            context: grpc.ServicerContext,
+        ) -> Any:
+            peer = context.peer() or "-"
+            if not is_allowed(self._config, peer):
+                audit.log_access(
+                    transport="grpc", granted=False, peer=peer, reason="rate limited"
+                )
+                context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, "rate limit exceeded")
+            return original_behavior(request, context)
+
+        return _wrap_unary_unary(handler, wrapper)
+
+
+class _AuthInterceptor(grpc.ServerInterceptor):
+    """Rejette en ``UNAUTHENTICATED`` un appel que ``backend`` n'autorise pas.
+
+    Rejects, as ``UNAUTHENTICATED``, a call that ``backend`` does not authorize.
+    """
+
+    def __init__(self, backend: BaseAuthBackend) -> None:
+        """Mémorise le backend d'authentification à consulter.
+
+        Stores the authentication backend to consult.
+        """
+        self._backend = backend
+
+    def intercept_service(
+        self,
+        continuation: Callable[[grpc.HandlerCallDetails], grpc.RpcMethodHandler],
+        handler_call_details: grpc.HandlerCallDetails,
+    ) -> grpc.RpcMethodHandler | None:
+        """Enveloppe le handler pour vérifier l'authentification avant de l'exécuter.
+
+        Wraps the handler to check authentication before running it.
+        """
+        handler = continuation(handler_call_details)
         metadata = dict(handler_call_details.invocation_metadata or ())
-        presented = metadata.get("authorization", "")
-        if not hmac.compare_digest(presented, f"Bearer {self._token}"):
-            return self._unauthenticated
-        return continuation(handler_call_details)
+        authorization = metadata.get("authorization")
+
+        def wrapper(
+            original_behavior: Callable[[Any, grpc.ServicerContext], Any],
+            request: Any,
+            context: grpc.ServicerContext,
+        ) -> Any:
+            result = self._backend.authenticate(authorization)
+            if not result.granted:
+                audit.log_access(
+                    transport="grpc",
+                    granted=False,
+                    peer=context.peer(),
+                    reason=result.reason,
+                )
+                context.abort(
+                    grpc.StatusCode.UNAUTHENTICATED, result.reason or "unauthorized"
+                )
+            return original_behavior(request, context)
+
+        return _wrap_unary_unary(handler, wrapper)
 
 
 def serve(
@@ -132,46 +220,75 @@ def serve(
     port: int = 50051,
     max_workers: int = 10,
     auth_token: str | None = None,
+    auth_backend: BaseAuthBackend | None = None,
     credentials: grpc.ServerCredentials | None = None,
     interceptors: Sequence[grpc.ServerInterceptor] = (),
+    rate_limit: RateLimitConfig | None = None,
+    max_message_bytes: int | None = None,
 ) -> None:
     """Démarre un serveur gRPC bloquant exposant ``GetResource`` via ``resolve``.
 
     S'arrête proprement sur ``SIGINT``/``SIGTERM`` (même logique que la
     commande ``eventbus_worker`` du bus d'événements).
 
-    ``auth_token``: si fourni, tout appel doit présenter la métadonnée
-    ``authorization: Bearer <auth_token>`` (voir ``_TokenAuthInterceptor``).
+    ``auth_token``: raccourci équivalent à
+    ``auth_backend=StaticTokenAuthBackend(auth_token)``, conservé pour
+    compatibilité. ``auth_backend``, s'il est fourni, est prioritaire.
     ``credentials``: si fourni (``grpc.ssl_server_credentials(...)``, ...),
     sert en TLS (``add_secure_port``) plutôt qu'en clair
     (``add_insecure_port``, comportement par défaut si omis).
-    ``interceptors``: interceptors gRPC additionnels (ex: rate limiting
-    maison), appliqués après ``auth_token`` s'il est aussi fourni.
+    ``rate_limit``: limite d'appels par pair (adresse gRPC), vérifiée
+    avant l'authentification. ``interceptors``: interceptors gRPC
+    additionnels, appliqués après ``rate_limit`` et ``auth_token``/
+    ``auth_backend``. ``max_message_bytes``: taille max (octets) des
+    messages reçus/envoyés (``grpc.max_receive_message_length``/
+    ``grpc.max_send_message_length``); ``None`` conserve la limite par
+    défaut de grpc.
 
     Starts a blocking gRPC server exposing ``GetResource`` via ``resolve``.
 
     Stops cleanly on ``SIGINT``/``SIGTERM`` (same logic as the event
     bus's ``eventbus_worker`` command).
 
-    ``auth_token``: if given, every call must present the
-    ``authorization: Bearer <auth_token>`` metadata entry (see
-    ``_TokenAuthInterceptor``).
-    ``credentials``: if given (``grpc.ssl_server_credentials(...)``, ...),
-    serves over TLS (``add_secure_port``) instead of in the clear
-    (``add_insecure_port``, the default if omitted).
-    ``interceptors``: additional gRPC interceptors (e.g. a custom rate
-    limiter), applied after ``auth_token``'s if that one is also given.
+    ``auth_token``: shorthand equivalent to
+    ``auth_backend=StaticTokenAuthBackend(auth_token)``, kept for
+    backward compatibility. ``auth_backend``, if given, takes
+    precedence. ``credentials``: if given
+    (``grpc.ssl_server_credentials(...)``, ...), serves over TLS
+    (``add_secure_port``) instead of in the clear
+    (``add_insecure_port``, the default if omitted). ``rate_limit``: a
+    per-peer (gRPC address) call limit, checked before authentication.
+    ``interceptors``: additional gRPC interceptors, applied after
+    ``rate_limit`` and ``auth_token``/``auth_backend``.
+    ``max_message_bytes``: max size (bytes) of received/sent messages
+    (``grpc.max_receive_message_length``/``grpc.max_send_message_length``);
+    ``None`` keeps grpc's own default limit.
     """
-    all_interceptors: list[grpc.ServerInterceptor] = list(interceptors)
-    if auth_token:
-        all_interceptors.insert(0, _TokenAuthInterceptor(auth_token))
+    effective_backend = auth_backend
+    if effective_backend is None and auth_token:
+        effective_backend = StaticTokenAuthBackend(auth_token)
+
+    all_interceptors: list[grpc.ServerInterceptor] = []
+    if rate_limit is not None:
+        all_interceptors.append(_RateLimitInterceptor(rate_limit))
+    if effective_backend is not None:
+        all_interceptors.append(_AuthInterceptor(effective_backend))
+    all_interceptors.extend(interceptors)
+
+    server_options = None
+    if max_message_bytes is not None:
+        server_options = [
+            ("grpc.max_receive_message_length", max_message_bytes),
+            ("grpc.max_send_message_length", max_message_bytes),
+        ]
 
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=max_workers),
         interceptors=all_interceptors,
+        options=server_options,
     )
     remote_resource_pb2_grpc.add_RemoteResourceServiceServicer_to_server(
-        RemoteResourceServicer(resolve), server
+        RemoteResourceServicer(resolve, auth_backend=effective_backend), server
     )
     if credentials is not None:
         server.add_secure_port(f"[::]:{port}", credentials)

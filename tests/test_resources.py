@@ -391,3 +391,59 @@ def test_resource_detail_requires_matching_bearer_token_when_configured():
             str(widget.id),
         )
         assert correct.status_code == 200
+
+
+@pytest.mark.django_db
+def test_resource_detail_rate_limits_by_remote_addr():
+    resource_name = _unique_resource_name("rate_limited")
+
+    @expose_resource
+    class WidgetSerializer(ResourceSerializer):
+        class Meta:
+            model = Widget
+            resource = resource_name
+            fields = ["id"]
+
+    widget = Widget.objects.create(name="Gadget", price_cents=1500)
+    factory = RequestFactory()
+
+    with override_settings(
+        REMOTE_DATA={"RATE_LIMIT": {"LIMIT": 1, "WINDOW_SECONDS": 60}}
+    ):
+        first = resource_detail(
+            factory.get("/", REMOTE_ADDR="10.0.0.1"), resource_name, str(widget.id)
+        )
+        assert first.status_code == 200
+
+        second = resource_detail(
+            factory.get("/", REMOTE_ADDR="10.0.0.1"), resource_name, str(widget.id)
+        )
+        assert second.status_code == 429
+
+        # Un autre appelant garde son propre budget.
+        other_caller = resource_detail(
+            factory.get("/", REMOTE_ADDR="10.0.0.2"), resource_name, str(widget.id)
+        )
+        assert other_caller.status_code == 200
+
+
+@pytest.mark.django_db
+def test_resource_detail_rate_limit_disabled_when_none():
+    resource_name = _unique_resource_name("rate_limit_disabled")
+
+    @expose_resource
+    class WidgetSerializer(ResourceSerializer):
+        class Meta:
+            model = Widget
+            resource = resource_name
+            fields = ["id"]
+
+    widget = Widget.objects.create(name="Gadget", price_cents=1500)
+    factory = RequestFactory()
+
+    with override_settings(REMOTE_DATA={"RATE_LIMIT": None}):
+        for _ in range(5):
+            response = resource_detail(
+                factory.get("/", REMOTE_ADDR="10.0.0.3"), resource_name, str(widget.id)
+            )
+            assert response.status_code == 200
