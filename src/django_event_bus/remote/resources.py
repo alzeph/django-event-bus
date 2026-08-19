@@ -33,7 +33,11 @@ import threading
 from collections.abc import Sequence
 from typing import Any
 
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.exceptions import (
+    FieldDoesNotExist,
+    ObjectDoesNotExist,
+    ValidationError,
+)
 from django.db.models import Model, QuerySet
 
 from ..exceptions import ImproperlyConfiguredError
@@ -248,6 +252,7 @@ def expose_resource(
             f"{serializer_class.__name__}.Meta doit définir 'model' et 'resource' / "
             "must define 'model' and 'resource'."
         )
+    _check_no_unserializable_relation_fields(serializer_class, model)
     with _registry_lock:
         existing = _registry.get(resource)
         if existing is not None and existing is not serializer_class:
@@ -257,6 +262,62 @@ def expose_resource(
             )
         _registry[resource] = serializer_class
     return serializer_class
+
+
+def _check_no_unserializable_relation_fields(
+    serializer_class: type[ResourceSerializer], model: type[Model]
+) -> None:
+    """Détecte au chargement un champ relation exposé sans ``get_<champ>``.
+
+    Sans ce garde-fou, l'erreur ne surviendrait qu'à la première requête
+    HTTP/gRPC, sous la forme d'un ``TypeError`` peu explicite au moment de
+    l'encodage JSON — le même contrôle existe dans
+    ``ResourceSerializer.to_representation`` comme filet de sécurité, pour
+    les cas non couverts ici (ex: ``Meta.fields``/``Meta.exclude`` mal
+    configurés, détecté seulement à l'usage, cf. ci-dessous).
+
+    Detects, at load time, a relation field exposed without a
+    ``get_<field>`` method.
+
+    Without this guard, the failure would only surface on the first
+    HTTP/gRPC request, as an unhelpful ``TypeError`` at JSON-encoding time
+    — the same check exists in ``ResourceSerializer.to_representation`` as
+    a safety net, for cases not covered here (e.g. a misconfigured
+    ``Meta.fields``/``Meta.exclude``, only caught on use, see below).
+    """
+    try:
+        field_names = serializer_class.get_fields()
+    except ImproperlyConfiguredError:
+        # 'fields' et 'exclude' mutuellement exclusifs: déjà signalé à
+        # l'usage par get_fields() lui-même, rien à valider ici.
+        #
+        # 'fields' and 'exclude' mutually exclusive: already reported on
+        # use by get_fields() itself, nothing to validate here.
+        return
+    for field_name in field_names:
+        if getattr(serializer_class, f"get_{field_name}", None) is not None:
+            continue
+        try:
+            model_field = model._meta.get_field(field_name)
+        except FieldDoesNotExist:
+            # Pas une colonne du modèle (propriété, champ mal orthographié,
+            # ...): déjà couvert à l'usage par le AttributeError de
+            # to_representation(), rien à valider ici non plus.
+            #
+            # Not a model column (property, misspelled field, ...): already
+            # covered on use by to_representation()'s AttributeError,
+            # nothing to validate here either.
+            continue
+        if model_field.is_relation:
+            raise ImproperlyConfiguredError(
+                f"{serializer_class.__name__}: le champ '{field_name}' est une "
+                f"relation ({model_field.__class__.__name__}) non sérialisable "
+                f"directement ; définissez get_{field_name}(self, instance) pour "
+                f"choisir quoi exposer / field '{field_name}' is a relation "
+                f"({model_field.__class__.__name__}) not directly serializable; "
+                f"define a get_{field_name}(self, instance) method to choose what "
+                "to expose."
+            )
 
 
 def get_registered_serializer(

@@ -30,7 +30,7 @@ class HTTPTransport(BaseTransport):
     returning a JSON object representing the resource. No particular REST
     framework is required on the source service side (a plain Django view
     is enough). Per-service config (``base_url``, optional ``timeout``,
-    ``headers``) comes from
+    ``headers``, ``auth_token``) comes from
     ``REMOTE_DATA["SERVICE_REGISTRY"][service]["http"]``.
     """
 
@@ -43,11 +43,23 @@ class HTTPTransport(BaseTransport):
         base_url = str(config["base_url"]).rstrip("/")
         url = f"{base_url}/{resource}/{pk}/"
 
+        headers = dict(config.get("headers") or {})
+        auth_token = config.get("auth_token")
+        if auth_token:
+            # Symétrique de REMOTE_DATA["AUTH_TOKEN"] côté serveur
+            # (resource_detail): évite d'avoir à reconstruire soi-même
+            # l'en-tête Authorization via `headers`.
+            #
+            # Symmetric with the server-side REMOTE_DATA["AUTH_TOKEN"]
+            # (resource_detail): avoids having to rebuild the Authorization
+            # header by hand via `headers`.
+            headers.setdefault("Authorization", f"Bearer {auth_token}")
+
         try:
             response = requests.get(
                 url,
                 timeout=config.get("timeout", 3),
-                headers=config.get("headers"),
+                headers=headers or None,
             )
         except requests.RequestException as exc:
             raise RemoteServiceUnavailableError(

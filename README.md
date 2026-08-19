@@ -344,6 +344,37 @@ REMOTE_DATA = {
 }
 ```
 
+### Securing the exposed endpoints
+
+By default, neither `resource_detail` nor the gRPC server perform
+authentication — see [SECURITY.md](SECURITY.md) for the full picture
+(they assume a trusted private network). Three opt-in layers, usable
+independently:
+
+```python
+# Provider side (service_auth)
+REMOTE_DATA = {
+    "AUTH_TOKEN": "a-shared-secret",              # HTTP: 401 / gRPC: UNAUTHENTICATED without it
+    "GRPC_SERVER_CREDENTIALS": "accounts.tls.build_server_credentials",  # -> grpc.ServerCredentials
+}
+
+# Consumer side (service_order)
+REMOTE_DATA = {
+    "SERVICE_REGISTRY": {
+        "service_auth": {
+            "http": {"base_url": "...", "auth_token": "a-shared-secret"},
+            "grpc": {"target": "...", "auth_token": "a-shared-secret", "credentials": channel_creds},
+        },
+    },
+}
+```
+
+For rate limiting, wrap `resource_detail` yourself in your own `urls.py`
+(e.g. with `django-ratelimit`) instead of including
+`django_event_bus.remote.urls` as-is, and/or pass your own
+`grpc.ServerInterceptor` via `manage.py remote_grpc_server`'s
+`serve(..., interceptors=[...])`.
+
 ### Event-driven invalidation
 
 ```python

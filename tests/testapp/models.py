@@ -30,3 +30,10 @@ class Widget(models.Model):
 
     name = models.CharField(max_length=64)
     price_cents = models.IntegerField()
+
+
+class WidgetOwner(models.Model):
+    """Modèle dédié au test de validation précoce d'un champ relation exposé
+    sans getter."""
+
+    widget = models.ForeignKey(Widget, on_delete=models.CASCADE)

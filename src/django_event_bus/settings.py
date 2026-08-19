@@ -123,6 +123,19 @@ REMOTE_DATA_DEFAULTS: dict[str, Any] = {
     # générique basé sur @expose_resource, qui couvre le cas standard
     # sans qu'aucun service n'ait à écrire sa propre fonction.
     "GRPC_RESOLVER": "django_event_bus.remote.resources.registry_resolver",
+    # Secret partagé optionnel protégeant les endpoints exposés
+    # (`resource_detail` HTTP et le serveur gRPC générique): si défini,
+    # tout appel sans en-tête/métadonnée `Authorization: Bearer <AUTH_TOKEN>`
+    # correspondant est rejeté (401 / UNAUTHENTICATED). `None` par défaut:
+    # aucune vérification, comportement inchangé (à réserver à un réseau
+    # déjà de confiance — voir SECURITY.md).
+    "AUTH_TOKEN": None,
+    # Chemin pointé vers un callable sans argument renvoyant des
+    # `grpc.ServerCredentials`, utilisé par `manage.py remote_grpc_server`
+    # pour servir en TLS (`add_secure_port`) plutôt qu'en clair. `None`
+    # par défaut: port non chiffré (`add_insecure_port`), comportement
+    # inchangé.
+    "GRPC_SERVER_CREDENTIALS": None,
 }
 
 remote_settings = LazySettings("REMOTE_DATA", REMOTE_DATA_DEFAULTS)

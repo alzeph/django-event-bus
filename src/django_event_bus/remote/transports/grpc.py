@@ -32,8 +32,8 @@ class GRPCTransport(BaseTransport):
     The source service must expose the ``RemoteResourceService`` gRPC
     service defined in ``remote/proto/remote_resource.proto`` (see
     ``remote.grpc_server.RemoteResourceServicer`` to implement it
-    easily). One gRPC channel is opened and reused per service (``target``
-    coming from
+    easily). One gRPC channel is opened and reused per service (``target``,
+    optional ``credentials``, coming from
     ``REMOTE_DATA["SERVICE_REGISTRY"][service]["grpc"]``).
     """
 
@@ -45,10 +45,18 @@ class GRPCTransport(BaseTransport):
         self._channels: dict[str, grpc.Channel] = {}
         self._lock = threading.Lock()
 
-    def _channel(self, service: str, target: str) -> grpc.Channel:
+    def _channel(self, service: str, config: dict[str, Any]) -> grpc.Channel:
         """Renvoie le canal du service, en le créant et le mettant en cache si besoin.
 
+        ``config["credentials"]`` (``grpc.ChannelCredentials``), si
+        fourni, ouvre un canal chiffré (``grpc.secure_channel``) plutôt
+        qu'en clair (``grpc.insecure_channel``, comportement par défaut).
+
         Returns the service's channel, creating and caching it if needed.
+
+        ``config["credentials"]`` (``grpc.ChannelCredentials``), if given,
+        opens an encrypted channel (``grpc.secure_channel``) instead of a
+        plaintext one (``grpc.insecure_channel``, the default).
         """
         channel = self._channels.get(service)
         if channel is not None:
@@ -56,7 +64,13 @@ class GRPCTransport(BaseTransport):
         with self._lock:
             channel = self._channels.get(service)
             if channel is None:
-                channel = grpc.insecure_channel(target)
+                target = config["target"]
+                credentials = config.get("credentials")
+                channel = (
+                    grpc.secure_channel(target, credentials)
+                    if credentials is not None
+                    else grpc.insecure_channel(target)
+                )
                 self._channels[service] = channel
         return channel
 
@@ -66,12 +80,24 @@ class GRPCTransport(BaseTransport):
         Calls ``GetResource`` and converts the response to a dict, ``None`` if absent.
         """
         config = registry_entry(service, "grpc")
-        channel = self._channel(service, config["target"])
+        channel = self._channel(service, config)
         stub = remote_resource_pb2_grpc.RemoteResourceServiceStub(channel)
         request = remote_resource_pb2.ResourceRequest(resource=resource, pk=str(pk))
 
+        metadata = None
+        auth_token = config.get("auth_token")
+        if auth_token:
+            # Symétrique de REMOTE_DATA["AUTH_TOKEN"] côté serveur
+            # (RemoteResourceServicer / _TokenAuthInterceptor).
+            #
+            # Symmetric with the server-side REMOTE_DATA["AUTH_TOKEN"]
+            # (RemoteResourceServicer / _TokenAuthInterceptor).
+            metadata = (("authorization", f"Bearer {auth_token}"),)
+
         try:
-            response = stub.GetResource(request, timeout=config.get("timeout", 3))
+            response = stub.GetResource(
+                request, timeout=config.get("timeout", 3), metadata=metadata
+            )
         except grpc.RpcError as exc:
             raise RemoteServiceUnavailableError(
                 f"Appel gRPC vers '{service}' impossible / failed: {exc}"

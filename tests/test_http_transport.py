@@ -59,3 +59,36 @@ def test_fetch_sends_configured_headers(requests_mock):
         transport.fetch(service="service_auth", resource="users", pk=1)
 
     assert requests_mock.last_request.headers["Authorization"] == "Bearer test-token"
+
+
+def test_fetch_sends_auth_token_as_bearer_header(requests_mock):
+    """``auth_token`` est un raccourci pour ne pas reconstruire soi-même
+    l'en-tête Authorization via ``headers``."""
+    requests_mock.get("http://testserver/api/users/1/", json={"id": 1})
+    registry = {
+        "service_auth": {
+            "http": {
+                "base_url": "http://testserver/api",
+                "timeout": 3,
+                "auth_token": "s3cr3t",
+            }
+        }
+    }
+
+    with override_settings(REMOTE_DATA={"SERVICE_REGISTRY": registry}):
+        transport = HTTPTransport()
+        transport.fetch(service="service_auth", resource="users", pk=1)
+
+    assert requests_mock.last_request.headers["Authorization"] == "Bearer s3cr3t"
+
+
+def test_fetch_raises_on_invalid_json_body(requests_mock):
+    requests_mock.get(
+        "http://testserver/api/users/1/",
+        text="<html>not json</html>",
+        status_code=200,
+    )
+    transport = HTTPTransport()
+
+    with pytest.raises(RemoteServiceUnavailableError):
+        transport.fetch(service="service_auth", resource="users", pk=1)

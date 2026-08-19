@@ -5,11 +5,12 @@ Reusable gRPC server exposing the generic ``GetResource`` RPC.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import signal
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent import futures
 from typing import Any
 
@@ -70,24 +71,112 @@ class RemoteResourceServicer(remote_resource_pb2_grpc.RemoteResourceServiceServi
         return remote_resource_pb2.ResourceResponse(found=True, data_json=data_json)
 
 
+def _unauthenticated_handler() -> grpc.RpcMethodHandler:
+    """Handler générique qui rejette l'appel en ``UNAUTHENTICATED``.
+
+    Generic handler that rejects the call as ``UNAUTHENTICATED``.
+    """
+
+    def terminate(
+        _request: Any, context: grpc.ServicerContext
+    ) -> remote_resource_pb2.ResourceResponse:
+        context.abort(grpc.StatusCode.UNAUTHENTICATED, "invalid or missing token")
+        # pragma: no cover — context.abort() always raises, never returns.
+        raise AssertionError("unreachable")
+
+    return grpc.unary_unary_rpc_method_handler(terminate)
+
+
+class _TokenAuthInterceptor(grpc.ServerInterceptor):
+    """Rejette tout appel sans métadonnée ``authorization: Bearer <token>`` valide.
+
+    Symétrique du contrôle fait côté HTTP par
+    ``remote.views._is_authorized``: même secret partagé
+    (``REMOTE_DATA["AUTH_TOKEN"]``), même comparaison à temps constant.
+
+    Rejects any call without a valid ``authorization: Bearer <token>``
+    metadata entry.
+
+    Symmetric with the HTTP-side check in ``remote.views._is_authorized``:
+    same shared secret (``REMOTE_DATA["AUTH_TOKEN"]``), same constant-time
+    comparison.
+    """
+
+    def __init__(self, token: str) -> None:
+        """Mémorise le token attendu et prépare le handler de rejet.
+
+        Stores the expected token and prepares the rejection handler.
+        """
+        self._token = token
+        self._unauthenticated = _unauthenticated_handler()
+
+    def intercept_service(
+        self,
+        continuation: Callable[[grpc.HandlerCallDetails], grpc.RpcMethodHandler],
+        handler_call_details: grpc.HandlerCallDetails,
+    ) -> grpc.RpcMethodHandler:
+        """Laisse passer l'appel si le token présenté correspond, le rejette sinon.
+
+        Passes the call through if the presented token matches, rejects it otherwise.
+        """
+        metadata = dict(handler_call_details.invocation_metadata or ())
+        presented = metadata.get("authorization", "")
+        if not hmac.compare_digest(presented, f"Bearer {self._token}"):
+            return self._unauthenticated
+        return continuation(handler_call_details)
+
+
 def serve(
-    resolve: ResourceResolver, *, port: int = 50051, max_workers: int = 10
+    resolve: ResourceResolver,
+    *,
+    port: int = 50051,
+    max_workers: int = 10,
+    auth_token: str | None = None,
+    credentials: grpc.ServerCredentials | None = None,
+    interceptors: Sequence[grpc.ServerInterceptor] = (),
 ) -> None:
     """Démarre un serveur gRPC bloquant exposant ``GetResource`` via ``resolve``.
 
     S'arrête proprement sur ``SIGINT``/``SIGTERM`` (même logique que la
     commande ``eventbus_worker`` du bus d'événements).
 
+    ``auth_token``: si fourni, tout appel doit présenter la métadonnée
+    ``authorization: Bearer <auth_token>`` (voir ``_TokenAuthInterceptor``).
+    ``credentials``: si fourni (``grpc.ssl_server_credentials(...)``, ...),
+    sert en TLS (``add_secure_port``) plutôt qu'en clair
+    (``add_insecure_port``, comportement par défaut si omis).
+    ``interceptors``: interceptors gRPC additionnels (ex: rate limiting
+    maison), appliqués après ``auth_token`` s'il est aussi fourni.
+
     Starts a blocking gRPC server exposing ``GetResource`` via ``resolve``.
 
     Stops cleanly on ``SIGINT``/``SIGTERM`` (same logic as the event
     bus's ``eventbus_worker`` command).
+
+    ``auth_token``: if given, every call must present the
+    ``authorization: Bearer <auth_token>`` metadata entry (see
+    ``_TokenAuthInterceptor``).
+    ``credentials``: if given (``grpc.ssl_server_credentials(...)``, ...),
+    serves over TLS (``add_secure_port``) instead of in the clear
+    (``add_insecure_port``, the default if omitted).
+    ``interceptors``: additional gRPC interceptors (e.g. a custom rate
+    limiter), applied after ``auth_token``'s if that one is also given.
     """
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
+    all_interceptors: list[grpc.ServerInterceptor] = list(interceptors)
+    if auth_token:
+        all_interceptors.insert(0, _TokenAuthInterceptor(auth_token))
+
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=max_workers),
+        interceptors=all_interceptors,
+    )
     remote_resource_pb2_grpc.add_RemoteResourceServiceServicer_to_server(
         RemoteResourceServicer(resolve), server
     )
-    server.add_insecure_port(f"[::]:{port}")
+    if credentials is not None:
+        server.add_secure_port(f"[::]:{port}", credentials)
+    else:
+        server.add_insecure_port(f"[::]:{port}")
     server.start()
     logger.info("Serveur gRPC démarré / gRPC server started sur/on port %s", port)
 

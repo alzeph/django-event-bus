@@ -58,6 +58,25 @@ jobs:
       - run: uv sync --locked --group dev
       - run: uv run pytest -m integration
 
+  # Scan des dépendances connues vulnérables (advisories PyPI/OSV). Non
+  # bloquant pour `build` volontairement: une CVE tout juste publiée sur
+  # une dépendance transitive ne doit pas empêcher un correctif urgent
+  # d'être publié faute de fix amont disponible — voir SECURITY.md.
+  #
+  # Scans dependencies against known vulnerability advisories
+  # (PyPI/OSV). Deliberately not blocking `build`: a CVE just disclosed
+  # on a transitive dependency should not prevent an urgent fix from
+  # being published for lack of an upstream patch yet — see SECURITY.md.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      - run: uv run --with pip-audit pip-audit
+
   test-django-versions:
     runs-on: ubuntu-latest
     strategy:
