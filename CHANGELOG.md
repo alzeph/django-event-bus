@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0rc2] - 2026-08-19
+
+### Added
+
+- **Optional shared-secret auth**: `REMOTE_DATA["AUTH_TOKEN"]`, checked by
+  `resource_detail` (401 if missing/wrong) and a new gRPC interceptor
+  (`UNAUTHENTICATED`); the HTTP and gRPC transports attach it
+  automatically from `auth_token` in the matching `SERVICE_REGISTRY`
+  entry.
+- **TLS for gRPC**: `remote.grpc_server.serve()` accepts `credentials`
+  (`grpc.ServerCredentials`, served via `add_secure_port`), wired from
+  `manage.py remote_grpc_server` via
+  `REMOTE_DATA["GRPC_SERVER_CREDENTIALS"]`; `GRPCTransport` opens an
+  encrypted channel when `credentials` is set in `SERVICE_REGISTRY`.
+- `serve()` accepts an `interceptors` sequence, so a custom gRPC rate
+  limiter (or any other interceptor) can be plugged in without forking
+  the server.
+- `resource_detail` now explicitly restricts the HTTP method to `GET`
+  (`@require_GET`).
+- `expose_resource` now detects, at load time, a relation field
+  (`ForeignKey`) listed without a `get_<field>` method, instead of a late
+  `TypeError` at JSON-encoding time on the first request.
+- `RedisStreamsBroker` accepts a `MAXLEN` option to bound the business
+  and dead-letter streams' length (`XADD ... MAXLEN ~`).
+- CI: a `security` job (`pip-audit`, advisory — not blocking `build`)
+  and a dedicated CodeQL workflow for Python.
+
+### Fixed
+
+- `HTTPTransport`/`GRPCTransport`: an invalid JSON response body now
+  raises `RemoteServiceUnavailableError`, like other unreachable/error
+  responses, instead of an unhandled decoding exception.
+- `RedisStreamsBroker`: recreating a consumer group lost to a `NOGROUP`
+  error (manual removal, ops mistake) no longer replays the stream's
+  entire history — it resumes from new messages only.
+- `ResourceSerializer.to_representation`: exposing a relation field
+  without a `get_<field>` method now raises a clear
+  `ImproperlyConfiguredError` instead of a `TypeError` at JSON encoding.
+- `dispatcher.dispatch`: a partial receiver failure now logs that the
+  redelivery will re-run every receiver for the event, including the
+  ones that already succeeded.
+
 ## [1.0.0rc1] - 2026-08-18
 
 ### Added

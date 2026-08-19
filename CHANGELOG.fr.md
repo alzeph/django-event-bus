@@ -9,6 +9,50 @@ et ce projet respecte le [Versionnage Sémantique](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.0.0rc2] - 2026-08-19
+
+### Ajouté
+
+- **Authentification par secret partagé (optionnelle)** :
+  `REMOTE_DATA["AUTH_TOKEN"]`, vérifié par `resource_detail` (401 si
+  absent/incorrect) et un nouvel intercepteur gRPC (`UNAUTHENTICATED`) ;
+  les transports HTTP et gRPC l'attachent automatiquement depuis
+  `auth_token` dans l'entrée `SERVICE_REGISTRY` correspondante.
+- **TLS pour gRPC** : `remote.grpc_server.serve()` accepte `credentials`
+  (`grpc.ServerCredentials`, servi via `add_secure_port`), câblé depuis
+  `manage.py remote_grpc_server` via
+  `REMOTE_DATA["GRPC_SERVER_CREDENTIALS"]` ; `GRPCTransport` ouvre un
+  canal chiffré quand `credentials` est défini dans `SERVICE_REGISTRY`.
+- `serve()` accepte une séquence `interceptors`, pour brancher un rate
+  limiter gRPC maison (ou tout autre intercepteur) sans forker le
+  serveur.
+- `resource_detail` restreint désormais explicitement la méthode HTTP à
+  `GET` (`@require_GET`).
+- `expose_resource` détecte désormais au chargement un champ relation
+  (`ForeignKey`) listé sans méthode `get_<champ>`, au lieu d'un
+  `TypeError` tardif à l'encodage JSON lors de la première requête.
+- `RedisStreamsBroker` accepte une option `MAXLEN` pour borner la
+  longueur des streams métier et de dead-letter (`XADD ... MAXLEN ~`).
+- CI : un job `security` (`pip-audit`, informatif — non bloquant pour
+  `build`) et un workflow CodeQL dédié pour Python.
+
+### Corrigé
+
+- `HTTPTransport`/`GRPCTransport` : un corps de réponse JSON invalide
+  lève désormais `RemoteServiceUnavailableError`, comme les autres
+  réponses injoignables/en erreur, au lieu d'une exception de décodage
+  non gérée.
+- `RedisStreamsBroker` : recréer un consumer group perdu suite à une
+  erreur `NOGROUP` (suppression manuelle, erreur d'exploitation) ne
+  rejoue plus tout l'historique du stream — reprend uniquement les
+  nouveaux messages.
+- `ResourceSerializer.to_representation` : exposer un champ relation
+  sans méthode `get_<champ>` lève désormais une `ImproperlyConfiguredError`
+  explicite au lieu d'un `TypeError` à l'encodage JSON.
+- `dispatcher.dispatch` : un échec partiel des receivers journalise
+  désormais que la ré-émission relancera tous les receivers de
+  l'événement, y compris ceux ayant déjà réussi.
+
 ## [1.0.0rc1] - 2026-08-18
 
 ### Ajouté
