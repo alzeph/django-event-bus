@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](pyproject.toml)
 
-> **Release candidate.** `django-event-bus` est en `1.0.0rc2` : l'API est
+> **Release candidate.** `django-event-bus` est en `1.0.0rc3` : l'API est
 > considérée comme figée mais n'a pas encore été éprouvée par un usage
 > réel hors de ce dépôt. Les retours (issues, cas d'usage, bugs) sont
 > bienvenus avant de tagger la version finale `1.0.0`.

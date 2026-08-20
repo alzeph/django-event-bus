@@ -7,7 +7,7 @@ English · [Français](README.fr.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](pyproject.toml)
 
-> **Release candidate.** `django-event-bus` is at `1.0.0rc2`: the API is
+> **Release candidate.** `django-event-bus` is at `1.0.0rc3`: the API is
 > considered frozen but has not yet been battle-tested by real-world usage
 > outside this repository. Feedback (issues, use cases, bugs) is welcome
 > before the final `1.0.0` is tagged.

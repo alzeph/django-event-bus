@@ -9,6 +9,8 @@ et ce projet respecte le [Versionnage Sémantique](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.0.0rc3] - 2026-08-20
+
 ### Ajouté
 
 - **Authentification pluggable** : `django_event_bus.remote.auth` avec
