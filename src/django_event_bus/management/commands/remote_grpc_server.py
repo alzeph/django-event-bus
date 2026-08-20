@@ -10,7 +10,9 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError
 from django.utils.module_loading import import_string
 
+from django_event_bus.remote.auth import resolve_auth_backend
 from django_event_bus.remote.grpc_server import serve
+from django_event_bus.remote.ratelimit import resolve_rate_limit_config
 from django_event_bus.settings import remote_settings
 
 
@@ -42,9 +44,9 @@ class Command(BaseCommand):
         parser.add_argument("--port", type=int, default=50051)
 
     def handle(self, *args: Any, **options: Any) -> None:
-        """Résout ``GRPC_RESOLVER`` + les options d'auth/TLS puis démarre le serveur.
+        """Résout ``GRPC_RESOLVER`` + auth/TLS/rate-limit, démarre le serveur.
 
-        Resolves ``GRPC_RESOLVER`` + the auth/TLS options then starts the server.
+        Resolves ``GRPC_RESOLVER`` + auth/TLS/rate-limit, starts the server.
         """
         resolver_path = remote_settings.GRPC_RESOLVER
         if not resolver_path:
@@ -62,10 +64,21 @@ class Command(BaseCommand):
             build_credentials = import_string(credentials_path)
             credentials = build_credentials()
 
+        if remote_settings.REQUIRE_TLS and credentials is None:
+            raise CommandError(
+                "REMOTE_DATA['REQUIRE_TLS'] est actif mais "
+                "REMOTE_DATA['GRPC_SERVER_CREDENTIALS'] n'est pas configuré: "
+                "refus de démarrer en clair / REMOTE_DATA['REQUIRE_TLS'] is "
+                "on but REMOTE_DATA['GRPC_SERVER_CREDENTIALS'] is not "
+                "configured: refusing to start in the clear."
+            )
+
         self.stdout.write(self.style.SUCCESS(f"Démarrage sur le port {port}"))
         serve(
             resolve,
             port=port,
-            auth_token=remote_settings.AUTH_TOKEN,
+            auth_backend=resolve_auth_backend(),
             credentials=credentials,
+            rate_limit=resolve_rate_limit_config(remote_settings.RATE_LIMIT),
+            max_message_bytes=remote_settings.MAX_RESPONSE_BYTES,
         )

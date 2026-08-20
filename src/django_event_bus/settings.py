@@ -136,6 +136,30 @@ REMOTE_DATA_DEFAULTS: dict[str, Any] = {
     # par défaut: port non chiffré (`add_insecure_port`), comportement
     # inchangé.
     "GRPC_SERVER_CREDENTIALS": None,
+    # Chemin pointé vers une instance de `remote.auth.BaseAuthBackend`
+    # (ex: `remote.auth.JWTAuthBackend(...)` construite dans un module de
+    # config du service). Prioritaire sur AUTH_TOKEN si les deux sont
+    # définis. `None` par défaut: AUTH_TOKEN (ci-dessus) sert alors de
+    # raccourci vers `StaticTokenAuthBackend`.
+    "AUTH_BACKEND": None,
+    # Nombre d'octets max lus depuis une réponse HTTP/gRPC distante avant
+    # d'abandonner (RemoteServiceUnavailableError): protège un
+    # consommateur contre un pair "de confiance" compromis ou mal
+    # configuré renvoyant un corps de réponse démesuré. Surchargeable par
+    # service via SERVICE_REGISTRY[service]["http"]["max_response_bytes"].
+    "MAX_RESPONSE_BYTES": 2_000_000,
+    # Limite de requêtes par appelant (adresse IP HTTP / adresse pair
+    # gRPC) sur `resource_detail` et le serveur gRPC générique, dans une
+    # fenêtre glissante grossière. `None` désactive. Actif par défaut
+    # (contrairement à AUTH_TOKEN): un simple hook n'aurait rien changé
+    # pour les services qui ne l'auraient pas branché — voir SECURITY.md.
+    "RATE_LIMIT": {"LIMIT": 300, "WINDOW_SECONDS": 60},
+    # Si True, refuse de servir/consommer sans TLS: HTTPTransport exige
+    # un `base_url` en `https://`, GRPCTransport exige `credentials` dans
+    # SERVICE_REGISTRY[service]["grpc"], et `manage.py remote_grpc_server`
+    # refuse de démarrer sans GRPC_SERVER_CREDENTIALS. `False` par
+    # défaut: comportement inchangé (TLS reste optionnel).
+    "REQUIRE_TLS": False,
 }
 
 remote_settings = LazySettings("REMOTE_DATA", REMOTE_DATA_DEFAULTS)
