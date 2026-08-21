@@ -9,6 +9,26 @@ et ce projet respecte le [Versionnage Sémantique](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- **Support natif de Kafka** : `django_event_bus.brokers.kafka.KafkaBroker`
+  (`pip install django-event-bus[kafka]`), un topic par type
+  d'événement, un consumer group par service
+  (`AUTO_OFFSET_RESET="earliest"` par défaut). `listen()` crée les
+  topics manquants via `AdminClient` plutôt que de dépendre de
+  l'auto-création côté broker, qui peut sinon laisser un topic tout
+  juste créé non découvert par le consumer pendant plusieurs minutes.
+  `fail()` republie l'événement avec un header `x-retry-count`
+  incrémenté jusqu'à son déplacement vers `{topic}.dlq`, Kafka ne
+  proposant pas de nack natif par message.
+- **Support natif de RabbitMQ** :
+  `django_event_bus.brokers.rabbitmq.RabbitMQBroker`
+  (`pip install django-event-bus[rabbitmq]`), une file durable par
+  (service, type d'événement) alimentée par un exchange direct
+  partagé. Les messages en échec passent par une file de retry à TTL ;
+  le header `x-death` propre à RabbitMQ suit le nombre de tentatives
+  avant le déplacement vers `{queue}.dlq`.
+
 ## [1.0.0rc3] - 2026-08-20
 
 ### Ajouté

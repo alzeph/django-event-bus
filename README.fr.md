@@ -68,9 +68,62 @@ EVENT_BUS = {
 défaut, `django_event_bus.brokers.locmem.LocMemBroker`, ne nécessite
 aucune infra (utile en tests/dev — c'est lui qui est utilisé si vous ne
 mettez pas `EVENT_BUS` du tout, sauf `SERVICE_NAME` qui reste
-obligatoire). Passer à Redis, ou demain à un autre broker qui
-implémenterait la même interface, ne change **que** ce dict — aucun
-code applicatif à toucher.
+obligatoire). Changer de broker ne change **que** ce dict — aucun code
+applicatif à toucher.
+
+### Les brokers disponibles
+
+| Backend | `BACKEND` | Installation | Nécessite |
+| --- | --- | --- | --- |
+| En mémoire | `django_event_bus.brokers.locmem.LocMemBroker` | inclus | rien (défaut) |
+| Redis Streams | `django_event_bus.brokers.redis_streams.RedisStreamsBroker` | inclus | un serveur Redis |
+| Kafka | `django_event_bus.brokers.kafka.KafkaBroker` | `pip install django-event-bus[kafka]` | un cluster Kafka |
+| RabbitMQ | `django_event_bus.brokers.rabbitmq.RabbitMQBroker` | `pip install django-event-bus[rabbitmq]` | un serveur RabbitMQ |
+
+Les trois backends adossés à une infra offrent les mêmes garanties
+at-least-once, avec un consumer group par service, décrites dans
+[Ce que la librairie garantit](#ce-que-la-librairie-garantit--et-ce-quelle-ne-garantit-pas)
+plus bas — seuls `OPTIONS` et l'exploitation propre à chaque broker
+diffèrent.
+
+```python
+# Kafka
+EVENT_BUS = {
+    "SERVICE_NAME": "service_auth",
+    "BACKEND": "django_event_bus.brokers.kafka.KafkaBroker",
+    "OPTIONS": {"BOOTSTRAP_SERVERS": "localhost:9092"},
+}
+
+# RabbitMQ
+EVENT_BUS = {
+    "SERVICE_NAME": "service_auth",
+    "BACKEND": "django_event_bus.brokers.rabbitmq.RabbitMQBroker",
+    "OPTIONS": {"URL": "amqp://guest:guest@localhost:5672/%2F"},
+}
+```
+
+La docstring de chaque module de broker documente l'intégralité de ses
+`OPTIONS` (nombre de tentatives, délais, nommage des topics/exchanges,
+...) et les compromis derrière sa conception — à lire avant de choisir :
+
+- **Redis Streams** : un stream par type d'événement, un consumer group
+  par service ; le nombre de tentatives suivi par `XPENDING` déclenche
+  le passage en dead-letter.
+- **Kafka** : un topic par type d'événement, un consumer group par
+  service (`AUTO_OFFSET_RESET="earliest"` par défaut, pour qu'un
+  nouveau groupe rejoue l'historique comme le fait Redis Streams).
+  Kafka ne proposant pas de nack natif par message, `fail()` republie
+  l'événement avec un header `x-retry-count` incrémenté jusqu'à son
+  déplacement vers `{topic}.dlq`.
+- **RabbitMQ** : une file durable par (service, type d'événement),
+  alimentée par un exchange partagé ; les messages en échec passent par
+  une file de retry à TTL, et le header `x-death` propre à RabbitMQ
+  suit le nombre de tentatives. Contrairement à Redis Streams et Kafka,
+  une file RabbitMQ n'a pas d'historique propre : les événements publiés
+  avant que le service consommateur n'ait jamais démarré son worker (et
+  donc jamais déclaré sa file) sont perdus — assurez-vous que
+  `eventbus_worker` a démarré au moins une fois par environnement avant
+  de compter sur la livraison inter-services.
 
 ### Émettre un événement
 

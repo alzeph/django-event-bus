@@ -50,12 +50,42 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
+      rabbitmq:
+        image: rabbitmq:3-management-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      # KRaft mono-noeud pret a l'emploi avec la config par defaut de
+      # l'image (pas de Zookeeper a orchestrer en plus).
+      #
+      # Single-node KRaft, ready to use with the image's default config
+      # (no Zookeeper to orchestrate alongside it).
+      kafka:
+        image: apache/kafka:3.8.0
+        ports:
+          - 9092:9092
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv sync --locked --group dev
+      # apache/kafka n'expose pas de healthcheck simple via les options
+      # Docker des services GitHub Actions: on attend que le port TCP
+      # reponde avant de lancer les tests, pour eviter que
+      # test_kafka_broker.py ne soit SKIPpe silencieusement faute de
+      # broker pret a temps.
+      #
+      # apache/kafka doesn't expose an easy healthcheck via GitHub
+      # Actions service Docker options: wait for the TCP port to answer
+      # before running the tests, so test_kafka_broker.py doesn't
+      # silently SKIP for lack of a broker ready in time.
+      - name: Wait for Kafka
+        run: timeout 60 bash -c 'until echo > /dev/tcp/localhost/9092; do sleep 1; done'
       - run: uv run pytest -m integration
 
   # Scan des dépendances connues vulnérables (advisories PyPI/OSV). Non
