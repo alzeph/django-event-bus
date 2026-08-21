@@ -9,6 +9,8 @@ et ce projet respecte le [Versionnage Sémantique](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.0.0] - 2026-08-21
+
 ### Ajouté
 
 - **Support natif de Kafka** : `django_event_bus.brokers.kafka.KafkaBroker`
