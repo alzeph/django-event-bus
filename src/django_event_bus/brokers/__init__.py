@@ -1,4 +1,4 @@
-"""Backends de transport du bus d'événements (Redis, mémoire, ...).
+"""Backends de transport du bus d'événements (Redis, Kafka, RabbitMQ, mémoire, ...).
 
-Event bus transport backends (Redis, in-memory, ...).
+Event bus transport backends (Redis, Kafka, RabbitMQ, in-memory, ...).
 """
